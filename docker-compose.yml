@@ -1,0 +1,43 @@
+name: edge-proxy
+
+# =============================================================================
+# Standalone edge proxy — terminates TLS for every public hostname on
+# this host and reverse-proxies into each app's compose stack over the
+# shared external network `pug_edge`.
+#
+# Architecture:
+#
+#     Cloudflare ──https──▶ this nginx ──http──▶ housing-backend:5000
+#       (Full Strict)                  ──http──▶ housing-frontend:3000
+#                                     (over pug_edge)
+#
+# Prereqs (one-time, on the host):
+#   1.  docker network create pug_edge
+#   2.  Cloudflare Origin Cert files placed at:
+#         ssl/origin.crt
+#         ssl/origin.key
+#       (see ssl/README.txt)
+#
+# Launch:
+#     docker compose up -d --build
+# =============================================================================
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      # Cloudflare Origin Certificate. Read-only mount.
+      - ./ssl:/etc/nginx/ssl:ro
+    networks:
+      - edge
+
+networks:
+  edge:
+    external: true
+    name: pug_edge

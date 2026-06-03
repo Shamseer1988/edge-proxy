@@ -1,0 +1,14 @@
+-----BEGIN CERTIFICATE-----
+... paste the Origin Certificate block from Cloudflare here ...
+... it will be ~25-30 lines of base64-looking text ...
+-----END CERTIFICATE-----
+
+NOTE: This file (origin.crt.example) is just a layout reference and
+must NOT be the file nginx loads. Rename it / create a new file at
+deploy/ssl/origin.crt with the real cert pasted between the BEGIN
+and END markers, no extra blank lines before or after.
+
+If Cloudflare gave you a chain (multiple BEGIN/END blocks), keep them
+in the order Cloudflare returned (leaf first, then intermediates) —
+nginx reads top-to-bottom and presents them to the client in that
+order.

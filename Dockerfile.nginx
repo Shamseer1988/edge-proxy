@@ -1,0 +1,24 @@
+FROM nginx:1.27-alpine
+
+# Bake the multi-vhost config + the shared include snippets into the
+# image. The certs are bind-mounted at runtime from ./ssl, so cert
+# rotation just needs `docker compose exec nginx nginx -s reload`.
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY snippets/ /etc/nginx/snippets/
+
+# We deliberately do NOT run `nginx -t` here: the housing-backend /
+# housing-frontend upstream names only resolve at runtime when Docker
+# attaches us to the pug_edge network and the housing stack is up.
+# Nginx will fail fast on startup if the config is invalid, which is
+# what we want.
+EXPOSE 80 443
+
+# Probe over 127.0.0.1 (loopback) so we don't get caught by the
+# Cloudflare edge allowlist. Pass the public Host header so SNI
+# routes us to the live accommodation vhost rather than the
+# `return 444` catch-all.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget --header="Host: accommodation.parisunitedgroup.com" \
+        -qO- --no-check-certificate https://127.0.0.1/health \
+        >/dev/null 2>&1 \
+   || exit 1

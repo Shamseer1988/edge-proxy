@@ -1,0 +1,7 @@
+# Origin Certificate material — never enter git.
+ssl/*.crt
+ssl/*.key
+!ssl/*.example
+
+# Build artefacts.
+*.log
