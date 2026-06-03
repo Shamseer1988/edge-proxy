@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PUG — Proxmox LXC Deployment Guide (no Docker)</title>
+<style>
+  :root{
+    --bg:#0f1419; --card:#fff; --ink:#1b2733; --muted:#5b6b7a; --line:#e3e8ee;
+    --accent:#2b6cb0; --accent2:#1a4d7a; --ok:#1f9d55; --warn:#b7791f; --code:#0d1b2a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       background:#eef2f6;color:var(--ink);line-height:1.55}
+  header.top{position:sticky;top:0;z-index:50;background:linear-gradient(135deg,#11202e,#0f1419);
+       color:#fff;padding:18px 26px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+  header.top h1{margin:0;font-size:20px;letter-spacing:.2px}
+  header.top .sub{color:#9fb3c8;font-size:13px;margin-top:4px}
+  .progwrap{margin-top:12px;background:rgba(255,255,255,.12);border-radius:8px;height:10px;overflow:hidden}
+  .progbar{height:100%;width:0;background:linear-gradient(90deg,#2b6cb0,#38b2ac);transition:width .3s}
+  .progtxt{font-size:12px;color:#9fb3c8;margin-top:6px}
+  main{max-width:1040px;margin:24px auto;padding:0 16px 80px}
+  .intro{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin-bottom:18px}
+  .intro h2{margin:.2em 0 .5em;font-size:16px}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:10px 0}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f4f7fa;font-weight:600}
+  code.inl{background:#eef1f5;border:1px solid #e0e5ec;border-radius:4px;padding:1px 5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+  .accordion{display:flex;flex-direction:column;gap:12px}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(20,30,40,.06)}
+  .step-head{display:flex;align-items:center;gap:14px;padding:16px 20px;cursor:pointer;user-select:none}
+  .step-head:hover{background:#f8fafc}
+  .badge{flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;
+       display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+  .step.done .badge{background:var(--ok)}
+  .step-title{flex:1;font-weight:650;font-size:15.5px}
+  .step-title small{display:block;color:var(--muted);font-weight:400;font-size:12.5px;margin-top:2px}
+  .chev{transition:transform .25s;color:var(--muted);font-size:18px}
+  .step.open .chev{transform:rotate(90deg)}
+  .step-body{display:none;padding:4px 22px 22px;border-top:1px solid var(--line)}
+  .step.open .step-body{display:block}
+  .step-body h3{font-size:14.5px;margin:18px 0 6px;color:var(--accent2)}
+  .step-body p{margin:8px 0}
+  .markdone{margin:16px 0 2px;display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer}
+  .code{position:relative;margin:10px 0;background:var(--code);border-radius:8px}
+  .code pre{margin:0;padding:14px 16px;overflow:auto;color:#d6e2f0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.7px;line-height:1.5}
+  .code .copy{position:absolute;top:8px;right:8px;background:#26384a;color:#cfe0f0;border:1px solid #3a4f63;
+       border-radius:6px;font-size:11px;padding:4px 9px;cursor:pointer}
+  .code .copy:hover{background:#33485d}
+  .code .copy.copied{background:#1f9d55;color:#fff;border-color:#1f9d55}
+  .file-label{font-size:11.5px;color:#7fa7c9;background:#16273a;padding:5px 14px;border-radius:8px 8px 0 0;font-family:ui-monospace,monospace}
+  .file-label + .code{margin-top:0;border-radius:0 0 8px 8px}
+  .note,.warn,.tip{border-radius:8px;padding:11px 14px;margin:12px 0;font-size:13.3px;border-left:4px solid}
+  .note{background:#eef5fb;border-color:var(--accent)}
+  .warn{background:#fdf6ec;border-color:var(--warn)}
+  .tip{background:#edf9f1;border-color:var(--ok)}
+  .pill{display:inline-block;background:#eef1f5;border:1px solid #e0e5ec;border-radius:20px;padding:1px 9px;font-size:11.5px;color:var(--muted)}
+  kbd{background:#222;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px}
+  .legend{font-size:12.5px;color:var(--muted)}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Paris United Group — Proxmox LXC Deployment (no Docker)</h1>
+  <div class="sub">Cloudflare Tunnel → nginx LXC → 3 app LXCs, each with its own PostgreSQL. Click a step to expand; mark it done to collapse and move on.</div>
+  <div class="progwrap"><div class="progbar" id="progbar"></div></div>
+  <div class="progtxt" id="progtxt">0 of 10 steps complete</div>
+</header>
+
+<main>
+  <div class="intro">
+    <h2>Configuration at a glance</h2>
+    <p class="legend">Adjust the LAN subnet / gateway / storage names to your environment. Everything below assumes the <code class="inl">192.168.100.0/24</code> LAN, gateway <code class="inl">192.168.100.1</code>, bridge <code class="inl">vmbr0</code>, and Proxmox storage <code class="inl">local-lvm</code> + template store <code class="inl">local</code>.</p>
+    <table>
+      <tr><th>Container</th><th>VMID</th><th>Hostname</th><th>Static IP</th><th>vCPU</th><th>RAM</th><th>Disk</th><th>Listens on</th></tr>
+      <tr><td>Cloudflare Tunnel</td><td>110</td><td>cf-tunnel</td><td>192.168.100.49</td><td>1</td><td>512 MB</td><td>4 GB</td><td>outbound 443 only</td></tr>
+      <tr><td>Edge nginx</td><td>111</td><td>edge-nginx</td><td><b>192.168.100.50</b></td><td>2</td><td>1 GB</td><td>8 GB</td><td>80, 443</td></tr>
+      <tr><td>Corporate site</td><td>112</td><td>pugweb</td><td>192.168.100.51</td><td>4</td><td>4 GB</td><td>40 GB</td><td>3000 (web), 8000 (api)</td></tr>
+      <tr><td>Housing portal</td><td>113</td><td>housing</td><td>192.168.100.52</td><td>4</td><td>4 GB</td><td>40 GB</td><td>3000 (web), 5000 (api)</td></tr>
+      <tr><td>Finance / PUG Accounts</td><td>114</td><td>pugfin</td><td>192.168.100.53</td><td>2</td><td>2 GB</td><td>20 GB</td><td>5000</td></tr>
+    </table>
+    <table>
+      <tr><th>Hostname</th><th>Served by (nginx upstream)</th></tr>
+      <tr><td>accommodation.parisunitedgroup.com</td><td>housing — 192.168.100.52 (/api → :5000, / → :3000)</td></tr>
+      <tr><td>pugfin.parisunitedgroup.com</td><td>finance — 192.168.100.53:5000</td></tr>
+      <tr><td>parisunitedgroup.com + www</td><td>corporate — 192.168.100.51 (/api/v1 → :8000, / → :3000)</td></tr>
+    </table>
+    <p class="legend">Replace every <code class="inl">CHANGE_ME</code> with a real strong secret. Generate one with <code class="inl">python3 -c "import secrets; print(secrets.token_urlsafe(48))"</code>.</p>
+  </div>
+
+  <div class="accordion" id="acc">
+
+  <!-- ============ STEP 0 ============ -->
+  <section class="step" data-step="0">
+    <div class="step-head"><div class="badge">✓</div>
+      <div class="step-title">Code-changes review — Docker → direct LXC
+        <small>What (if anything) needs to change in the three repos</small></div>
+      <div class="chev">▶</div></div>
+    <div class="step-body">
+      <p class="tip"><b>Result: zero application code changes.</b> All three apps already read their DB/Redis location from environment variables and default to <code class="inl">localhost</code>. The Docker setup was the detour — bare-metal was always supported.</p>
+      <h3>Corporate (PUGHoldingWebSite)</h3>
+      <ul>
+        <li><code class="inl">backend/app/core/config.py</code> — <code class="inl">postgres_host</code> defaults to <code class="inl">localhost</code>, <code class="inl">redis_url</code> to <code class="inl">redis://localhost:6379/0</code>. No change.</li>
+        <li>Frontend bakes <code class="inl">NEXT_PUBLIC_API_BASE_URL</code> at build time — set it in <code class="inl">.env.production</code> before <code class="inl">npm run build</code>.</li>
+        <li>Config-only: bind backend/frontend to <code class="inl">0.0.0.0</code> (the shipped systemd units bind <code class="inl">127.0.0.1</code> because nginx used to be on the same host; here nginx is a separate CT). Units below already do this.</li>
+      </ul>
+      <h3>Housing (Employee-Housing-Control-Portal)</h3>
+      <ul>
+        <li><code class="inl">backend/config.py</code> resolves the DB URL as: <code class="inl">DATABASE_URL</code> → assembled <code class="inl">POSTGRES_*</code> → <code class="inl">localhost</code> fallback. No change.</li>
+        <li><code class="inl">gunicorn.conf.py</code> already binds <code class="inl">0.0.0.0:5000</code>. Entry points <code class="inl">wsgi:app</code> and <code class="inl">celery -A celery_worker.celery</code> are real.</li>
+        <li>Config-only: you author 4 systemd units (web, api, celery worker, celery beat) and install <code class="inl">libmagic1</code> (python-magic). No code edits.</li>
+      </ul>
+      <h3>Finance (PUGFinanceApp)</h3>
+      <ul>
+        <li>App factory <code class="inl">app:create_app()</code>; PostgreSQL-only via <code class="inl">DATABASE_URL</code>; migrations <code class="inl">flask --app "app:create_app()" db upgrade</code>. No change.</li>
+        <li>On Linux use <code class="inl">waitress-serve</code> (already in requirements) or gunicorn instead of the Windows <code class="inl">serve.py</code> path. No code edit — just the service command.</li>
+        <li>No Node, no Redis, no Celery, no JS build — the simplest of the three.</li>
+      </ul>
+      <p class="note">Common to all: every backend targets <b>Python 3.11</b> (Debian 12's native Python) and both frontends are <b>Next.js 14</b> (Node 20 LTS). One golden CT template covers everything.</p>
+      <label class="markdone"><input type="checkbox"> Mark this step complete</label>
+    </div>
+  </section>
+
+  <!-- ============ STEP 1 ============ -->
+  <section class="step" data-step="1">
+    <div class="step-head"><div class="badge">1</div>
+      <div class="step-title">Install Proxmox VE on the server
+        <small>ISO → bootable USB → install → first login</small></div>
+      <div class="chev">▶</div></div>
+    <div class="step-body">
+      <h3>1.1 Create the installer</h3>
+      <ul>
+        <li>Download <b>Proxmox VE</b> ISO from <a href="https://www.proxmox.com/en/downloads">proxmox.com/downloads</a>.</li>
+        <li>Write it to a USB stick with <a href="https://etcher.balena.io/">balenaEtcher</a> or Rufus (DD mode).</li>
+        <li>Boot the server from the USB (enable virtualization / VT-x/AMD-V in BIOS first).</li>
+      </ul>
+      <h3>1.2 Run the installer</h3>
+      <ul>
+        <li>Target disk: pick your system disk. <span class="pill">Tip</span> choose <b>ZFS (RAID1)</b> if you have two disks — you get snapshots + bit-rot protection. Otherwise ext4/LVM is fine.</li>
+        <li>Country / timezone / keyboard.</li>
+        <li>Set a strong <b>root password</b> + admin email.</li>
+        <li>Management network — set a <b>static</b> address:
+          <ul>
+            <li>Hostname: <code class="inl">pve.parisunitedgroup.local</code></li>
+            <li>IP/CIDR: <code class="inl">192.168.100.10/24</code></li>
+            <li>Gateway: <code class="inl">192.168.100.1</code></li>
+            <li>DNS: <code class="inl">1.1.1.1</code></li>
+          </ul>
+        </li>
+        <li>Finish, reboot, remove the USB.</li>
+      </ul>
+      <h3>1.3 First login</h3>
+      <p>From any PC on the LAN open the web UI (accept the self-signed cert warning):</p>
+      <div class="code"><button class="copy">Copy</button><pre>https://192.168.100.10:8006</pre></div>
+      <p>Log in as <code class="inl">root</code> with the password you set. You can dismiss the "No valid subscription" notice — the next step switches to the free repo.</p>
+      <label class="markdone"><input type="checkbox"> Mark this step complete</label>
+    </div>
+  </section>
+
+  <!-- ============ STEP 2 ============ -->
+  <section class="step" data-step="2">
+    <div class="step-head"><div class="badge">2</div>
+      <div class="step-title">Proxmox host setup &amp; base packages
+        <small>Free repo, updates, host tools, Debian 12 CT template</small></div>
+      <div class="chev">▶</div></div>
+    <div class="step-body">
+      <p>Open the host shell: Proxmox UI → select the node → <b>Shell</b> (or SSH to <code class="inl">root@192.168.100.10</code>). Run everything here as <code class="inl">root</code>.</p>
+      <h3>2.1 Switch to the no-subscription repo &amp; update</h3>
+      <div class="code"><button class="copy">Copy</button><pre>sed -i 's/^deb/#deb/' /etc/apt/sources.list.d/pve-enterprise.list 2>/dev/null
+sed -i 's/^deb/#deb/' /etc/apt/sources.list.d/ceph.list 2>/dev/null
+echo "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription" > /etc/apt/sources.list.d/pve-no-subscription.list
+apt update && apt -y full-upgrade</pre></div>
+      <h3>2.2 Useful host tools</h3>
+      <p class="warn">Keep the hypervisor lean — only operational tools on the host. <b>App runtimes (Node, Python venvs, Postgres) go INSIDE the containers, not here.</b></p>
+      <div class="code"><button class="copy">Copy</button><pre>apt install -y git curl vim htop tmux ca-certificates ufw</pre></div>
+      <h3>2.3 Confirm the network bridge</h3>
+      <p>The default <code class="inl">vmbr0</code> bridges your physical NIC to the LAN — that is what the containers attach to. Verify it carries your static IP:</p>
+      <div class="code"><button class="copy">Copy</button><pre>ip -br a show vmbr0
+cat /etc/network/interfaces   # vmbr0 should have address 192.168.100.10/24, gateway 192.168.100.1</pre></div>
+      <h3>2.4 Download the Debian 12 container template</h3>
+      <div class="code"><button class="copy">Copy</button><pre>pveam update
+pveam available | grep debian-12          # note the exact filename shown
+pveam download local debian-12-standard_12.7-1_amd64.tar.zst</pre></div>
+      <p class="note">If the version string differs, use the filename your <code class="inl">pveam available</code> prints. Every <code class="inl">pct create</code> below references this template.</p>
+      <label class="markdone"><input type="checkbox"> Mark this step complete</label>
+    </div>
+  </section>
+
+  <!-- ============ STEP 3 ============ -->
+  <section class="step" data-step="3">
+    <div class="step-head"><div class="badge">3</div>
+      <div class="step-title">CT 110 — Cloudflare Tunnel
+        <small>Dedicated LXC running cloudflared → https://192.168.100.50:443</small></div>
+      <div class="chev">▶</div></div>
+    <div class="step-body">
+      <h3>3.1 Create the container (run on the Proxmox host)</h3>
+      <div class="code"><button class="copy">Copy</button><pre>pct create 110 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
+  --hostname cf-tunnel \
+  --cores 1 --memory 512 --swap 512 \
+  --rootfs local-lvm:4 \
+  --net0 name=eth0,bridge=vmbr0,ip=192.168.100.49/24,gw=192.168.100.1 \
+  --nameserver 1.1.1.1 \
+  --unprivileged 1 --features nesting=1 --onboot 1 \
+  --password CHANGE_ME --start 1
+pct enter 110</pre></div>
+      <h3>3.2 Install cloudflared (inside CT 110)</h3>
+      <div class="code"><button class="copy">Copy</button><pre>apt update && apt install -y curl
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o /usr/local/bin/cloudflared
+chmod +x /usr/local/bin/cloudflared
+mkdir -p /etc/cloudflared
+cloudflared --version</pre></div>
+      <h3>3.3 Point the tunnel at the nginx CT (the key change)</h3>
+      <p>You currently send traffic to <code class="inl">localhost:443</code>. Re-point every hostname to the real nginx CT IP <b>192.168.100.50:443</b>. Two ways depending on how your tunnel is managed:</p>
+
+      <p><b>A) Remotely-managed tunnel (Cloudflare dashboard → Zero Trust → Networks → Tunnels):</b> run it with the token, then edit each Public Hostname in the dashboard.</p>
+      <div class="code"><button class="copy">Copy</button><pre># Install as a service using the token Cloudflare shows for your tunnel:
+cloudflared service install TUNNEL_TOKEN_HERE
+systemctl enable --now cloudflared
+systemctl status cloudflared --no-pager</pre></div>
+      <p class="note">Then in the dashboard, for each hostname set <b>Service = HTTPS</b>, <b>URL = 192.168.100.50:443</b>, and under <b>Additional settings → TLS</b> enable <b>No TLS Verify</b> (origin cert is a Cloudflare Origin CA cert). Hostnames: <code class="inl">accommodation</code>, <code class="inl">pugfin</code>, <code class="inl">parisunitedgroup.com</code>, <code class="inl">www.parisunitedgroup.com</code>.</p>
+
+      <p><b>B) Locally-managed tunnel (config file).</b> Create the config:</p>
+      <div class="file-label">/etc/cloudflared/config.yml</div>
+      <div class="code"><button class="copy">Copy</button><pre>tunnel: TUNNEL_ID_HERE
+credentials-file: /etc/cloudflared/TUNNEL_ID_HERE.json
+
+ingress:
+  - hostname: accommodation.parisunitedgroup.com
+    service: https://192.168.100.50:443
+    originRequest:
+      noTLSVerify: true
+  - hostname: pugfin.parisunitedgroup.com
+    service: https://192.168.100.50:443
+    originRequest:
+      noTLSVerify: true
+  - hostname: parisunitedgroup.com
+    service: https://192.168.100.50:443
+    originRequest:
+      noTLSVerify: true
+  - hostname: www.parisunitedgroup.com
+    service: https://192.168.100.50:443
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404</pre></div>
+      <p>Authenticate, copy your tunnel credentials JSON into <code class="inl">/etc/cloudflared/</code>, route DNS, then install the service:</p>
+      <div class="code"><button class="copy">Copy</button><pre># If creating fresh (skip if you already have the tunnel + json):
+cloudflared tunnel login
+cloudflared tunnel create pug-edge          # prints the TUNNEL_ID + writes the json
+
+# Map each hostname to this tunnel (CNAME in Cloudflare DNS):
+cloudflared tunnel route dns pug-edge accommodation.parisunitedgroup.com
+cloudflared tunnel route dns pug-edge pugfin.parisunitedgroup.com
+cloudflared tunnel route dns pug-edge parisunitedgroup.com
+cloudflared tunnel route dns pug-edge www.parisunitedgroup.com
+
+cloudflared --config /etc/cloudflared/config.yml service install
+systemctl enable --now cloudflared
+systemctl status cloudflared --no-pager</pre></div>
+      <p class="tip">cloudflared dials <b>out</b> to Cloudflare on 443 — there is <b>no router port-forwarding</b> anywhere, exactly as you wanted. Type <code class="inl">exit</code> to leave the container.</p>
+      <label class="markdone"><input type="checkbox"> Mark this step complete</label>
+    </div>
+  </section>
+
+  <!-- ============ STEP 4 ============ -->
+  <section class="step" data-step="4">
+    <div class="step-head"><div class="badge">4</div>
+      <div class="step-title">CT 111 — Edge nginx
+        <small>Native nginx, TLS with the Cloudflare Origin Cert, upstreams = app CT IPs</small></div>
+      <div class="chev">▶</div></div>
+    <div class="step-body">
+      <h3>4.1 Create &amp; enter the container (on the host)</h3>
+      <div class="code"><button class="copy">Copy</button><pre>pct create 111 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
+  --hostname edge-nginx \
+  --cores 2 --memory 1024 --swap 1024 \
+  --rootfs local-lvm:8 \
+  --net0 name=eth0,bridge=vmbr0,ip=192.168.100.50/24,gw=192.168.100.1 \
+  --nameserver 1.1.1.1 \
+  --unprivileged 1 --features nesting=1 --onboot 1 \
+  --password CHANGE_ME --start 1
+pct enter 111</pre></div>
+      <h3>4.2 Install nginx (inside CT 111)</h3>
+      <div class="code"><button class="copy">Copy</button><pre>apt update && apt install -y nginx
+rm -f /etc/nginx/sites-enabled/default
+mkdir -p /etc/nginx/snippets /etc/nginx/ssl</pre></div>
+      <h3>4.3 Drop in the Cloudflare Origin Certificate</h3>
+      <p>Create <code class="inl">/etc/nginx/ssl/origin.crt</code> and <code class="inl">/etc/nginx/ssl/origin.key</code> by pasting the cert + key from Cloudflare (SSL/TLS → Origin Server → Create Certificate). Make sure the cert lists the <b>apex</b> <code class="inl">parisunitedgroup.com</code> AND <code class="inl">*.parisunitedgroup.com</code>.</p>
+      <div class="code"><button class="copy">Copy</button><pre>chmod 600 /etc/nginx/ssl/origin.key
+chmod 644 /etc/nginx/ssl/origin.crt</pre></div>
+      <h3>4.4 Shared snippets</h3>
+      <div class="file-label">/etc/nginx/snippets/ssl-common.conf</div>
+      <div class="code"><button class="copy">Copy</button><pre>ssl_certificate     /etc/nginx/ssl/origin.crt;
+ssl_certificate_key /etc/nginx/ssl/origin.key;
+ssl_protocols       TLSv1.2 TLSv1.3;
+ssl_prefer_server_ciphers on;
+ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;</pre></div>
+      <div class="file-label">/etc/nginx/snippets/proxy-common.conf</div>
+      <div class="code"><button class="copy">Copy</button><pre>proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto https;
+proxy_http_version 1.1;
+proxy_set_header Connection "";</pre></div>
+      <div class="file-label">/etc/nginx/snippets/security-headers.conf</div>
+      <div class="code"><button class="copy">Copy</button><pre>add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "DENY" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()" always;</pre></div>
+      <h3>4.5 The site config</h3>
+      <div class="file-label">/etc/nginx/conf.d/default.conf</div>
+      <div class="code"><button class="copy">Copy</button><pre># Edge proxy on 192.168.100.50. TLS terminates here; Cloudflare Tunnel
+# sends every hostname to https://192.168.100.50:443. Real client IP
+# arrives via CF-Connecting-IP from the tunnel CT (192.168.100.49).
+set_real_ip_from 192.168.100.0/24;
+real_ip_header CF-Connecting-IP;
+real_ip_recursive on;
+
+ssl_session_cache shared:SSL:50m;
+ssl_session_timeout 1d;
+ssl_session_tickets off;
+gzip on;
+gzip_types text/plain application/json application/javascript text/css image/svg+xml application/xml;
+gzip_min_length 1024;
+
+# ---- Upstreams: the app LXC containers ----
+upstream pugweb_frontend  { server 192.168.100.51:3000; keepalive 32; }
+upstream pugweb_api       { server 192.168.100.51:8000; keepalive 32; }
+upstream housing_frontend { server 192.168.100.52:3000; keepalive 32; }
+upstream housing_backend  { server 192.168.100.52:5000; keepalive 32; }
+upstream pugfin_app       { server 192.168.100.53:5000; keepalive 32; }
+
+# ---- 80 -> 443 ----
+server {
+    listen 80 default_server;
+    server_name accommodation.parisunitedgroup.com pugfin.parisunitedgroup.com parisunitedgroup.com www.parisunitedgroup.com;
+    return 301 https://$host$request_uri;
+}
+
+# ---- default 443: drop unknown SNI ----
+server {
+    listen 443 ssl default_server;
+    http2 on;
+    server_name _;
+    include /etc/nginx/snippets/ssl-common.conf;
+    return 444;
+}
+
+# ---- Host 1: accommodation -> housing ----
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name accommodation.parisunitedgroup.com;
+    include /etc/nginx/snippets/ssl-common.conf;
+    include /etc/nginx/snippets/security-headers.conf;
+    client_max_body_size 30M;
+
+    location = /health { proxy_pass http://housing_backend/api/v1/health; access_log off; }
+    location /api/ {
+        include /etc/nginx/snippets/proxy-common.conf;
+        proxy_buffering off; proxy_cache off; proxy_read_timeout 1h;
+        proxy_pass http://housing_backend;
+    }
+    location / {
+        include /etc/nginx/snippets/proxy-common.conf;
+        proxy_pass http://housing_frontend; proxy_read_timeout 60s;
+    }
+}
+
+# ---- Host 2: pugfin -> finance (single Flask app, serves its own static) ----
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name pugfin.parisunitedgroup.com;
+    include /etc/nginx/snippets/ssl-common.conf;
+    include /etc/nginx/snippets/security-headers.conf;
+    client_max_body_size 30M;
+
+    location = /health { access_log off; default_type text/plain; return 200 "ok\n"; }
+    location / {
+        include /etc/nginx/snippets/proxy-common.conf;
+        proxy_pass http://pugfin_app; proxy_read_timeout 120s;
+    }
+}
+
+# ---- Host 3: corporate -> pugweb (the app sets its own CSP, so none here) ----
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name parisunitedgroup.com www.parisunitedgroup.com;
+    include /etc/nginx/snippets/ssl-common.conf;
+    include /etc/nginx/snippets/security-headers.conf;
+    client_max_body_size 20M;
+
+    if ($host = www.parisunitedgroup.com) { return 301 https://parisunitedgroup.com$request_uri; }
+
+    location = /health { access_log off; default_type text/plain; return 200 "ok\n"; }
+    location /api/v1/ {
+        include /etc/nginx/snippets/proxy-common.conf;
+        proxy_buffering off; proxy_cache off; proxy_read_timeout 1h;
+        proxy_pass http://pugweb_api;
+    }
+    location /_next/static/ {
+        include /etc/nginx/snippets/proxy-common.conf;
+        proxy_pass http://pugweb_frontend;
+        expires 30d; add_header Cache-Control "public, max-age=2592000, immutable";
+    }
+    location / {
+        include /etc/nginx/snippets/proxy-common.conf;
+        proxy_pass http://pugweb_frontend; proxy_read_timeout 60s;
+    }
+}</pre></div>
+      <h3>4.6 Validate &amp; start</h3>
+      <div class="code"><button class="copy">Copy</button><pre>nginx -t && systemctl enable --now nginx && systemctl reload nginx</pre></div>
+      <p class="warn">nginx will fail to fully serve a site until that app's CT is up (the upstream must resolve/connect). That's fine — do the app CTs next, then re-test. Type <code class="inl">exit</code>.</p>
+      <label class="markdone"><input type="checkbox"> Mark this step complete</label>
+    </div>
+  </section>
+
+  <!-- ============ STEP 5 ============ -->
+  <section class="step" data-step="5">
+    <div class="step-head"><div class="badge">5</div>
+      <div class="step-title">CT 112 — Corporate website (PUGHoldingWebSite)
+        <small>Next.js + FastAPI + PostgreSQL + Redis, all native via systemd</small></div>
+      <div class="chev">▶</div></div>
+    <div class="step-body">
+      <h3>5.1 Create &amp; enter (on the host)</h3>
+      <div class="code"><button class="copy">Copy</button><pre>pct create 112 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
+  --hostname pugweb \
+  --cores 4 --memory 4096 --swap 2048 \
+  --rootfs local-lvm:40 \
+  --net0 name=eth0,bridge=vmbr0,ip=192.168.100.51/24,gw=192.168.100.1 \
+  --nameserver 1.1.1.1 \
+  --unprivileged 1 --features nesting=1 --onboot 1 \
+  --password CHANGE_ME --start 1
+pct enter 112</pre></div>
+      <h3>5.2 Base packages: Python 3.11, Node 20, PostgreSQL 17, Redis</h3>
+      <div class="code"><button class="copy">Copy</button><pre>apt update && apt -y full-upgrade
+apt install -y git curl ca-certificates build-essential python3 python3-venv python3-dev libpq-dev redis-server
+
+# Node 20 LTS
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs
+
+# PostgreSQL 17 (PGDG repo; matches the Docker postgres:17 you ran)
+install -d /usr/share/postgresql-common/pgdg
+curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+apt update && apt install -y postgresql-17
+
+systemctl enable --now postgresql redis-server</pre></div>
+      <h3>5.3 Database + app user</h3>
+      <div class="code"><button class="copy">Copy</button><pre>sudo -u postgres psql -c "CREATE USER pug_user WITH PASSWORD 'CHANGE_ME';"
+sudo -u postgres psql -c "CREATE DATABASE pug_holding OWNER pug_user;"
+
+useradd --system --create-home --home-dir /opt/pugweb --shell /bin/bash pugweb
+git clone https://github.com/Shamseer1988/PUGHoldingWebSite.git /opt/pugweb
+chown -R pugweb:pugweb /opt/pugweb</pre></div>
+      <h3>5.4 Backend (FastAPI) — venv, env, migrations</h3>
+      <div class="file-label">/opt/pugweb/backend/.env  (create as user pugweb)</div>
+      <div class="code"><button class="copy">Copy</button><pre>SECRET_KEY=CHANGE_ME
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=pug_user
+POSTGRES_PASSWORD=CHANGE_ME
+POSTGRES_DB=pug_holding
+REDIS_URL=redis://localhost:6379/0
+APP_ENV=production
+PUBLIC_SITE_URL=https://parisunitedgroup.com
+CORS_ORIGINS=https://parisunitedgroup.com,https://www.parisunitedgroup.com
+UPLOAD_DIR=/opt/pugweb/backend/uploads
+# Add R2_*, AZURE_OPENAI_*, SENTRY_DSN_BACKEND as you use them</pre></div>
+      <div class="code"><button class="copy">Copy</button><pre>sudo -u pugweb bash -lc '
+  cd /opt/pugweb/backend
+  python3 -m venv .venv
+  .venv/bin/pip install --upgrade pip wheel
+  .venv/bin/pip install -r requirements.txt
+  mkdir -p uploads
+  .venv/bin/alembic upgrade head
+'</pre></div>
+      <h3>5.5 Frontend (Next.js) — env, install, build</h3>
+      <div class="file-label">/opt/pugweb/frontend/.env.production</div>
+      <div class="code"><button class="copy">Copy</button><pre>NEXT_PUBLIC_API_BASE_URL=https://parisunitedgroup.com/api/v1
+NODE_ENV=production</pre></div>
+      <div class="code"><button class="copy">Copy</button><pre>sudo -u pugweb bash -lc '
+  cd /opt/pugweb/frontend
+  npm ci
+  npm run build
+'</pre></div>
+      <p class="tip"><b>Build RAM:</b> <code class="inl">next build</code> is the memory-hungry step. This CT has 4 GB which is enough; if a bigger app ever OOMs, temporarily raise the CT memory in Proxmox or prepend <code class="inl">NODE_OPTIONS=--max-old-space-size=3072</code>.</p>
+      <h3>5.6 systemd units</h3>
+      <div class="file-label">/etc/systemd/system/pugweb-backend.service</div>
+      <div class="code"><button class="copy">Copy</button><pre>[Unit]
+Description=PUG Corporate FastAPI backend
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=pugweb
+WorkingDirectory=/opt/pugweb/backend
+EnvironmentFile=/opt/pugweb/backend/.env
+Environment=GUNICORN_WORKERS=3
+ExecStart=/opt/pugweb/backend/.venv/bin/gunicorn app.main:app \
+  --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS} \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --timeout 60 --graceful-timeout 30 --keep-alive 5 \
+  --access-logfile - --error-logfile -
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target</pre></div>
+      <div class="file-label">/etc/systemd/system/pugweb-frontend.service</div>
+      <div class="code"><button class="copy">Copy</button><pre>[Unit]
+Description=PUG Corporate Next.js frontend
+After=network.target pugweb-backend.service
+
+[Service]
+Type=simple
+User=pugweb
+WorkingDirectory=/opt/pugweb/frontend
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm run start -- -H 0.0.0.0 -p 3000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target</pre></div>
+      <p class="legend">Optional ARQ background worker (only if you use it): a third unit with <code class="inl">ExecStart=/opt/pugweb/backend/.venv/bin/python worker_runner.py</code>.</p>
+      <div class="code"><button class="copy">Copy</button><pre>systemctl daemon-reload
+systemctl enable --now pugweb-backend pugweb-frontend
+systemctl status pugweb-backend pugweb-frontend --no-pager
+
+# local smoke test
+curl -fsS http://127.0.0.1:8000/api/v1/health && echo " API OK"
+curl -fsS -I http://127.0.0.1:3000 | head -1</pre></div>
+      <p class="legend">Type <code class="inl">exit</code> to leave the container.</p>
+      <label class="markdone"><input type="checkbox"> Mark this step complete</label>
+    </div>
+  </section>
+
+  <!-- ============ STEP 6 ============ -->
+  <section class="step" data-step="6">
+    <div class="step-head"><div class="badge">6</div>
+      <div class="step-title">CT 113 — Housing Control Portal
+        <small>Next.js + Flask + Celery worker + beat + PostgreSQL + Redis</small></div>
+      <div class="chev">▶</div></div>
+    <div class="step-body">
+      <h3>6.1 Create &amp; enter (on the host)</h3>
+      <div class="code"><button class="copy">Copy</button><pre>pct create 113 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
+  --hostname housing \
+  --cores 4 --memory 4096 --swap 2048 \
+  --rootfs local-lvm:40 \
+  --net0 name=eth0,bridge=vmbr0,ip=192.168.100.52/24,gw=192.168.100.1 \
+  --nameserver 1.1.1.1 \
+  --unprivileged 1 --features nesting=1 --onboot 1 \
+  --password CHANGE_ME --start 1
+pct enter 113</pre></div>
+      <h3>6.2 Base packages (note the extra <code class="inl">libmagic1</code>)</h3>
+      <div class="code"><button class="copy">Copy</button><pre>apt update && apt -y full-upgrade
+apt install -y git curl ca-certificates build-essential python3 python3-venv python3-dev \
+               libpq-dev libmagic1 redis-server
+
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs
+
+install -d /usr/share/postgresql-common/pgdg
+curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+apt update && apt install -y postgresql-17
+
+systemctl enable --now postgresql redis-server</pre></div>
+      <h3>6.3 Database + app user</h3>
+      <div class="code"><button class="copy">Copy</button><pre>sudo -u postgres psql -c "CREATE USER pug WITH PASSWORD 'CHANGE_ME';"
+sudo -u postgres psql -c "CREATE DATABASE pug_accommodation OWNER pug;"
+
+useradd --system --create-home --home-dir /opt/housing --shell /bin/bash housing
+git clone https://github.com/Shamseer1988/Employee-Housing-Control-Portal.git /opt/housing
+chown -R housing:housing /opt/housing</pre></div>
+      <h3>6.4 Backend env</h3>
+      <div class="file-label">/opt/housing/backend/.env</div>
+      <div class="code"><button class="copy">Copy</button><pre>FLASK_ENV=production
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=pug
+POSTGRES_PASSWORD=CHANGE_ME
+POSTGRES_DB=pug_accommodation
+REDIS_URL=redis://localhost:6379/0
+SECRET_KEY=CHANGE_ME
+JWT_SECRET_KEY=CHANGE_ME
+JWT_COOKIE_SECURE=true
+JWT_COOKIE_SAMESITE=Lax
+CORS_ORIGINS=https://accommodation.parisunitedgroup.com
+UPLOAD_FOLDER=/opt/housing/data/uploads
+BACKUP_FOLDER=/opt/housing/data/backups
+SUPERUSER_USERNAME=admin
+SUPERUSER_EMAIL=admin@parisunitedgroup.com
+SUPERUSER_PASSWORD=CHANGE_ME
+GUNICORN_WORKERS=4</pre></div>
+      <h3>6.5 Backend install + one-time DB bootstrap</h3>
+      <div class="code"><button class="copy">Copy</button><pre>sudo -u housing bash -lc '
+  cd /opt/housing/backend
+  python3 -m venv .venv
+  .venv/bin/pip install --upgrade pip wheel
+  .venv/bin/pip install -r requirements.txt
+  mkdir -p /opt/housing/data/uploads /opt/housing/data/backups
+  set -a; . ./.env; set +a
+  .venv/bin/flask --app wsgi wait-for-db
+  .venv/bin/flask --app wsgi init-db
+  .venv/bin/flask --app wsgi migrate-all
+  .venv/bin/flask --app wsgi seed
+'</pre></div>
+      <h3>6.6 Frontend build</h3>
+      <div class="file-label">/opt/housing/frontend/.env.production</div>
+      <div class="code"><button class="copy">Copy</button><pre>NODE_ENV=production
+BACKEND_INTERNAL_URL=http://127.0.0.1:5000</pre></div>
+      <div class="code"><button class="copy">Copy</button><pre>sudo -u housing bash -lc 'cd /opt/housing/frontend && npm ci && npm run build'</pre></div>
+      <h3>6.7 systemd units (4: api, frontend, celery worker, celery beat)</h3>
+      <div class="file-label">/etc/systemd/system/housing-backend.service</div>
+      <div class="code"><button class="copy">Copy</button><pre>[Unit]
+Description=Housing Flask API (gunicorn)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=housing
+WorkingDirectory=/opt/housing/backend
+EnvironmentFile=/opt/housing/backend/.env
+ExecStart=/opt/housing/backend/.venv/bin/gunicorn -c gunicorn.conf.py wsgi:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target</pre></div>
+      <div class="file-label">/etc/systemd/system/housing-worker.service</div>
+      <div class="code"><button class="copy">Copy</button><pre>[Unit]
+Description=Housing Celery worker
+After=network.target redis-server.service housing-backend.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=housing
+WorkingDirectory=/opt/housing/backend
+EnvironmentFile=/opt/housing/backend/.env
+ExecStart=/opt/housing/backend/.venv/bin/celery -A celery_worker.celery worker --loglevel=info
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target</pre></div>
+      <div class="file-label">/etc/systemd/system/housing-beat.service</div>
+      <div class="code"><button class="copy">Copy</button><pre>[Unit]
+Description=Housing Celery beat (scheduler)
+After=network.target redis-server.service housing-backend.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=housing
+WorkingDirectory=/opt/housing/backend
+EnvironmentFile=/opt/housing/backend/.env
+ExecStart=/opt/housing/backend/.venv/bin/celery -A celery_worker.celery beat --loglevel=info
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target</pre></div>
+      <div class="file-label">/etc/systemd/system/housing-frontend.service</div>
+      <div class="code"><button class="copy">Copy</button><pre>[Unit]
+Description=Housing Next.js frontend
+After=network.target housing-backend.service
+
+[Service]
+Type=simple
+User=housing
+WorkingDirectory=/opt/housing/frontend
+Environment=NODE_ENV=production
+Environment=BACKEND_INTERNAL_URL=http://127.0.0.1:5000
+ExecStart=/usr/bin/npm run start -- -H 0.0.0.0 -p 3000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target</pre></div>
+      <div class="code"><button class="copy">Copy</button><pre>systemctl daemon-reload
+systemctl enable --now housing-backend housing-worker housing-beat housing-frontend
+systemctl status housing-backend housing-frontend --no-pager
+
+curl -fsS http://127.0.0.1:5000/api/v1/health && echo " API OK"
+curl -fsS -I http://127.0.0.1:3000 | head -1</pre></div>
+      <p class="legend">Type <code class="inl">exit</code> to leave the container.</p>
+      <label class="markdone"><input type="checkbox"> Mark this step complete</label>
+    </div>
+  </section>
+
+  <!-- ============ STEP 7 ============ -->
+  <section class="step" data-step="7">
+    <div class="step-head"><div class="badge">7</div>
+      <div class="step-title">CT 114 — Finance / PUG Accounts (PUGFinanceApp)
+        <small>Flask + PostgreSQL, served by waitress. No Node, no Redis, no build.</small></div>
+      <div class="chev">▶</div></div>
+    <div class="step-body">
+      <h3>7.1 Create &amp; enter (on the host)</h3>
+      <div class="code"><button class="copy">Copy</button><pre>pct create 114 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
+  --hostname pugfin \
+  --cores 2 --memory 2048 --swap 1024 \
+  --rootfs local-lvm:20 \
+  --net0 name=eth0,bridge=vmbr0,ip=192.168.100.53/24,gw=192.168.100.1 \
+  --nameserver 1.1.1.1 \
+  --unprivileged 1 --features nesting=1 --onboot 1 \
+  --password CHANGE_ME --start 1
+pct enter 114</pre></div>
+      <h3>7.2 Base packages + PostgreSQL</h3>
+      <div class="code"><button class="copy">Copy</button><pre>apt update && apt -y full-upgrade
+apt install -y git curl ca-certificates build-essential python3 python3-venv python3-dev libpq-dev
+
+install -d /usr/share/postgresql-common/pgdg
+curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+apt update && apt install -y postgresql-17
+systemctl enable --now postgresql</pre></div>
+      <h3>7.3 Database + app user</h3>
+      <div class="code"><button class="copy">Copy</button><pre>sudo -u postgres psql -c "CREATE USER pugfin WITH PASSWORD 'CHANGE_ME';"
+sudo -u postgres psql -c "CREATE DATABASE pugfin_db OWNER pugfin;"
+
+useradd --system --create-home --home-dir /opt/pugfin --shell /bin/bash pugfin
+git clone https://github.com/Shamseer1988/PUGFinanceApp.git /opt/pugfin
+chown -R pugfin:pugfin /opt/pugfin</pre></div>
+      <h3>7.4 Env</h3>
+      <div class="file-label">/opt/pugfin/.env</div>
+      <div class="code"><button class="copy">Copy</button><pre>FLASK_CONFIG=production
+SECRET_KEY=CHANGE_ME
+DATABASE_URL=postgresql+psycopg2://pugfin:CHANGE_ME@localhost:5432/pugfin_db
+HOST=0.0.0.0
+PORT=5000
+WAITRESS_THREADS=8
+# OPENAI_API_KEY=... (if the AI features are used)</pre></div>
+      <h3>7.5 Install + migrate</h3>
+      <div class="code"><button class="copy">Copy</button><pre>sudo -u pugfin bash -lc '
+  cd /opt/pugfin
+  python3 -m venv .venv
+  .venv/bin/pip install --upgrade pip wheel
+  .venv/bin/pip install -r requirements.txt
+  set -a; . ./.env; set +a
+  .venv/bin/flask --app "app:create_app()" db upgrade
+'</pre></div>
+      <p class="legend">If a first-run admin/seed is needed, the repo ships <code class="inl">init_db.py</code> / <code class="inl">seed_data.py</code> — run <code class="inl">.venv/bin/python init_db.py</code> once (check the repo README for exact seeding).</p>
+      <h3>7.6 systemd unit (waitress)</h3>
+      <div class="file-label">/etc/systemd/system/pugfin.service</div>
+      <div class="code"><button class="copy">Copy</button><pre>[Unit]
+Description=PUG Finance / Accounts (Flask via waitress)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=pugfin
+WorkingDirectory=/opt/pugfin
+EnvironmentFile=/opt/pugfin/.env
+ExecStart=/opt/pugfin/.venv/bin/waitress-serve --host=0.0.0.0 --port=5000 --threads=8 --call app:create_app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target</pre></div>
+      <div class="code"><button class="copy">Copy</button><pre>systemctl daemon-reload
+systemctl enable --now pugfin
+systemctl status pugfin --no-pager
+curl -fsS -I http://127.0.0.1:5000 | head -1</pre></div>
+      <p class="legend">Type <code class="inl">exit</code> to leave the container.</p>
+      <label class="markdone"><input type="checkbox"> Mark this step complete</label>
+    </div>
+  </section>
+
+  <!-- ============ STEP 8 ============ -->
+  <section class="step" data-step="8">
+    <div class="step-head"><div class="badge">8</div>
+      <div class="step-title">Migrate existing data + DNS + end-to-end verification
+        <small>Move the Postgres data off Docker, point DNS, test every hostname</small></div>
+      <div class="chev">▶</div></div>
+    <div class="step-body">
+      <h3>8.1 Move each database from the old Docker setup</h3>
+      <p>On the <b>Windows</b> box, dump each running container DB, then restore into the matching CT. (Skip if you're starting fresh / re-seeding.)</p>
+      <div class="code"><button class="copy">Copy</button><pre>:: --- on Windows, in each app's folder ---
+docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U pug_user pug_holding      > pugweb.sql
+docker compose -f docker-compose.prod.yml exec -T db       pg_dump -U pug pug_accommodation     > housing.sql
+:: finance is already bare-metal; dump from wherever it runs:
+:: pg_dump -U pugfin pugfin_db > pugfin.sql</pre></div>
+      <p>Copy each <code class="inl">.sql</code> into the right CT (e.g. via <code class="inl">scp</code> to the CT IP) and load it:</p>
+      <div class="code"><button class="copy">Copy</button><pre># inside CT 112 (corporate)
+sudo -u postgres psql -d pug_holding -f /root/pugweb.sql
+# inside CT 113 (housing)
+sudo -u postgres psql -d pug_accommodation -f /root/housing.sql</pre></div>
+      <p class="note">All three are PostgreSQL 17 → dump/restore is clean. Also <code class="inl">rsync</code> any upload folders (corporate <code class="inl">uploads/</code> unless on R2; housing <code class="inl">data/uploads</code> + <code class="inl">data/backups</code>) into the new CT paths.</p>
+      <h3>8.2 Cloudflare DNS</h3>
+      <p>Each hostname must be a <b>Proxied (orange-cloud)</b> record that resolves through your tunnel. If you used <code class="inl">cloudflared tunnel route dns</code> (Step 3B) the CNAMEs are already created. Otherwise add them in the dashboard pointing at the tunnel. Hostnames: <code class="inl">accommodation</code>, <code class="inl">pugfin</code>, <code class="inl">parisunitedgroup.com</code>, <code class="inl">www</code>.</p>
+      <h3>8.3 End-to-end tests</h3>
+      <p><b>From the nginx CT (111)</b> — proves nginx → app CTs works:</p>
+      <div class="code"><button class="copy">Copy</button><pre>for h in accommodation.parisunitedgroup.com pugfin.parisunitedgroup.com parisunitedgroup.com; do
+  echo "== $h =="
+  curl -ksS -o /dev/null -w "%{http_code}\n" -H "Host: $h" https://127.0.0.1/health
+done</pre></div>
+      <p><b>From the public internet</b> — proves Cloudflare → tunnel → nginx → app works:</p>
+      <div class="code"><button class="copy">Copy</button><pre>curl -I https://parisunitedgroup.com/health
+curl -I https://accommodation.parisunitedgroup.com/health
+curl -I https://pugfin.parisunitedgroup.com/health</pre></div>
+      <p class="tip">All should return <code class="inl">200</code>. Then load each site in a browser and check the console is clean (the corporate site's own CSP already allows its analytics + the Google Maps embed).</p>
+      <label class="markdone"><input type="checkbox"> Mark this step complete</label>
+    </div>
+  </section>
+
+  <!-- ============ STEP 9 ============ -->
+  <section class="step" data-step="9">
+    <div class="step-head"><div class="badge">9</div>
+      <div class="step-title">Operations — backups, snapshots, redeploys
+        <small>Day-2 routines that beat the old Windows setup</small></div>
+      <div class="chev">▶</div></div>
+    <div class="step-body">
+      <h3>9.1 Proxmox snapshots &amp; backups</h3>
+      <p>Snapshot a CT before any upgrade (instant rollback), and schedule <code class="inl">vzdump</code> backups (or stand up a Proxmox Backup Server).</p>
+      <div class="code"><button class="copy">Copy</button><pre># on the host — snapshot before changes
+pct snapshot 112 pre-update
+# scheduled full backup of all app CTs (UI: Datacenter -> Backup), or ad-hoc:
+vzdump 112 113 114 --storage local --mode snapshot --compress zstd</pre></div>
+      <h3>9.2 Per-app Postgres dumps (each keeps its own DB)</h3>
+      <div class="code"><button class="copy">Copy</button><pre># inside each app CT, daily via cron
+sudo -u postgres pg_dump pug_holding      | gzip > /opt/pugweb/db-$(date +%F).sql.gz   # corporate
+sudo -u postgres pg_dump pug_accommodation| gzip > /opt/housing/db-$(date +%F).sql.gz  # housing
+sudo -u postgres pg_dump pugfin_db        | gzip > /opt/pugfin/db-$(date +%F).sql.gz   # finance</pre></div>
+      <h3>9.3 Redeploy after a git push</h3>
+      <div class="code"><button class="copy">Copy</button><pre># Corporate (CT 112)
+sudo -u pugweb bash -lc 'cd /opt/pugweb && git pull \
+  && cd backend && .venv/bin/pip install -r requirements.txt && .venv/bin/alembic upgrade head \
+  && cd ../frontend && npm ci && npm run build'
+systemctl restart pugweb-backend pugweb-frontend
+
+# Housing (CT 113)
+sudo -u housing bash -lc 'cd /opt/housing && git pull \
+  && cd backend && .venv/bin/pip install -r requirements.txt && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi migrate-all \
+  && cd ../frontend && npm ci && npm run build'
+systemctl restart housing-backend housing-worker housing-beat housing-frontend
+
+# Finance (CT 114)
+sudo -u pugfin bash -lc 'cd /opt/pugfin && git pull \
+  && .venv/bin/pip install -r requirements.txt && set -a && . ./.env && set +a && .venv/bin/flask --app "app:create_app()" db upgrade'
+systemctl restart pugfin</pre></div>
+      <h3>9.4 Logs</h3>
+      <div class="code"><button class="copy">Copy</button><pre>journalctl -u pugweb-backend -f         # any service, live tail
+journalctl -u housing-worker --since "1 hour ago"
+systemctl status cloudflared --no-pager  # on CT 110</pre></div>
+      <p class="tip"><b>Why this fixes your freeze:</b> each CT has a hard CPU/RAM cgroup limit, so a <code class="inl">next build</code> in one container can never starve the others or the host. Right-size from the Proxmox per-CT graphs after a week.</p>
+      <label class="markdone"><input type="checkbox"> Mark this step complete</label>
+    </div>
+  </section>
+
+  </div>
+</main>
+
+<script>
+  // Accordion: open one at a time
+  const acc = document.getElementById('acc');
+  const steps = [...acc.querySelectorAll('.step')];
+  steps.forEach(s=>{
+    s.querySelector('.step-head').addEventListener('click', ()=>{
+      const wasOpen = s.classList.contains('open');
+      steps.forEach(x=>x.classList.remove('open'));
+      if(!wasOpen) s.classList.add('open');
+    });
+  });
+  // open the first by default
+  if(steps[0]) steps[0].classList.add('open');
+
+  // Mark-done + progress + persistence
+  const KEY='pug-proxmox-guide-done';
+  const done = JSON.parse(localStorage.getItem(KEY)||'{}');
+  const total = steps.length;
+  function refresh(){
+    const n = Object.values(done).filter(Boolean).length;
+    document.getElementById('progbar').style.width = (n/total*100)+'%';
+    document.getElementById('progtxt').textContent = n+' of '+total+' steps complete';
+  }
+  steps.forEach(s=>{
+    const id = s.dataset.step;
+    const cb = s.querySelector('.markdone input');
+    if(cb){
+      cb.checked = !!done[id];
+      if(done[id]) s.classList.add('done');
+      cb.addEventListener('change', ()=>{
+        done[id]=cb.checked;
+        s.classList.toggle('done', cb.checked);
+        localStorage.setItem(KEY, JSON.stringify(done));
+        refresh();
+        if(cb.checked){ // collapse this, open the next undone
+          s.classList.remove('open');
+          const next = steps.find(x=>!done[x.dataset.step]);
+          if(next) next.classList.add('open');
+        }
+      });
+    }
+  });
+  refresh();
+
+  // Copy buttons
+  document.querySelectorAll('.code .copy').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const pre = btn.parentElement.querySelector('pre');
+      navigator.clipboard.writeText(pre.innerText).then(()=>{
+        btn.textContent='Copied'; btn.classList.add('copied');
+        setTimeout(()=>{btn.textContent='Copy'; btn.classList.remove('copied');},1400);
+      });
+    });
+  });
+</script>
+</body>
+</html>
