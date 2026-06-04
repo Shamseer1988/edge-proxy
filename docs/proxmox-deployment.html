@@ -167,10 +167,25 @@
     <div class="step-body">
       <p>Open the host shell: Proxmox UI → select the node → <b>Shell</b> (or SSH to <code class="inl">root@192.168.100.10</code>). Run everything here as <code class="inl">root</code>.</p>
       <h3>2.1 Switch to the no-subscription repo &amp; update</h3>
+      <p>PVE 9 = Debian 13 "trixie" with the new deb822 <code class="inl">.sources</code> format; PVE 8 = Debian 12 "bookworm" with one‑line <code class="inl">.list</code> files. Check which you have, then use the matching block:</p>
+      <div class="code"><button class="copy">Copy</button><pre>. /etc/os-release; echo "$VERSION_CODENAME"   # trixie = PVE 9, bookworm = PVE 8</pre></div>
+      <p><b>PVE 9 (trixie):</b></p>
+      <div class="code"><button class="copy">Copy</button><pre># enterprise repos are .sources here — a sed on .list won't disable them
+mv /etc/apt/sources.list.d/pve-enterprise.sources{,.disabled} 2>/dev/null
+mv /etc/apt/sources.list.d/ceph.sources{,.disabled} 2>/dev/null
+cat > /etc/apt/sources.list.d/pve-no-subscription.sources &lt;&lt;'EOF'
+Types: deb
+URIs: http://download.proxmox.com/debian/pve
+Suites: trixie
+Components: pve-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+EOF
+apt update &amp;&amp; apt -y full-upgrade</pre></div>
+      <p><b>PVE 8 (bookworm):</b></p>
       <div class="code"><button class="copy">Copy</button><pre>sed -i 's/^deb/#deb/' /etc/apt/sources.list.d/pve-enterprise.list 2>/dev/null
 sed -i 's/^deb/#deb/' /etc/apt/sources.list.d/ceph.list 2>/dev/null
 echo "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription" > /etc/apt/sources.list.d/pve-no-subscription.list
-apt update && apt -y full-upgrade</pre></div>
+apt update &amp;&amp; apt -y full-upgrade</pre></div>
       <h3>2.2 Useful host tools</h3>
       <p class="warn">Keep the hypervisor lean — only operational tools on the host. <b>App runtimes (Node, Python venvs, Postgres) go INSIDE the containers, not here.</b></p>
       <div class="code"><button class="copy">Copy</button><pre>apt install -y git curl vim htop tmux ca-certificates ufw</pre></div>
@@ -206,11 +221,14 @@ pveam download local debian-12-standard_12.7-1_amd64.tar.zst</pre></div>
 pct enter 110</pre></div>
       <h3>3.2 Install cloudflared (inside CT 110)</h3>
       <div class="code"><button class="copy">Copy</button><pre>apt update && apt install -y curl
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-  -o /usr/local/bin/cloudflared
-chmod +x /usr/local/bin/cloudflared
+# install from Cloudflare's apt repo (lands in /usr/bin, always on PATH, updatable)
+mkdir -p --mode=0755 /usr/share/keyrings
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared bookworm main' > /etc/apt/sources.list.d/cloudflared.list
+apt update && apt install -y cloudflared
 mkdir -p /etc/cloudflared
 cloudflared --version</pre></div>
+      <p class="legend">(The manual binary download works too, but if <code class="inl">/usr/local/bin</code> isn't on <code class="inl">$PATH</code> you get <code class="inl">cloudflared: command not found</code> — the apt package avoids that.)</p>
       <h3>3.3 Point the tunnel at the nginx CT (the key change)</h3>
       <p>You currently send traffic to <code class="inl">localhost:443</code>. Re-point every hostname to the real nginx CT IP <b>192.168.100.50:443</b>. Two ways depending on how your tunnel is managed:</p>
 
@@ -308,8 +326,15 @@ add_header X-Content-Type-Options "nosniff" always;
 add_header X-Frame-Options "DENY" always;
 add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()" always;</pre></div>
-      <h3>4.5 The site config</h3>
-      <div class="file-label">/etc/nginx/conf.d/default.conf</div>
+      <h3>4.5 The site config — pull it from the repo</h3>
+      <p>Don't hand‑paste this. The repo ships a ready <b>LXC build</b> at <code class="inl">lxc/nginx.conf</code>: static CT‑IP upstreams (so one down app can't stop nginx booting) and the nginx‑1.22 <code class="inl">listen … ssl http2</code> form — Debian 12's nginx is 1.22, where <code class="inl">http2 on;</code> errors with <code class="inl">unknown directive</code>.</p>
+      <div class="code"><button class="copy">Copy</button><pre>apt install -y git
+git clone https://github.com/Shamseer1988/edge-proxy.git /opt/edge-proxy
+cp /opt/edge-proxy/lxc/nginx.conf /etc/nginx/conf.d/default.conf
+cp /opt/edge-proxy/snippets/*    /etc/nginx/snippets/
+# update later:  cd /opt/edge-proxy && git pull  then re-copy the two paths + reload nginx</pre></div>
+      <p class="legend">Edit the upstream CT IPs at the top of <code class="inl">/etc/nginx/conf.d/default.conf</code> if yours differ from 192.168.100.51‑53. The full config is shown below for reference (identical to <code class="inl">lxc/nginx.conf</code>):</p>
+      <div class="file-label">/etc/nginx/conf.d/default.conf  (reference — same as lxc/nginx.conf)</div>
       <div class="code"><button class="copy">Copy</button><pre># Edge proxy on 192.168.100.50. TLS terminates here; Cloudflare Tunnel
 # sends every hostname to https://192.168.100.50:443. Real client IP
 # arrives via CF-Connecting-IP from the tunnel CT (192.168.100.49).
@@ -320,7 +345,7 @@ real_ip_recursive on;
 ssl_session_cache shared:SSL:50m;
 ssl_session_timeout 1d;
 ssl_session_tickets off;
-gzip on;
+# NOTE: no `gzip on;` — Debian's main nginx.conf already sets it (duplicate = emerg).
 gzip_types text/plain application/json application/javascript text/css image/svg+xml application/xml;
 gzip_min_length 1024;
 
@@ -340,8 +365,8 @@ server {
 
 # ---- default 443: drop unknown SNI ----
 server {
-    listen 443 ssl default_server;
-    http2 on;
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
     server_name _;
     include /etc/nginx/snippets/ssl-common.conf;
     return 444;
@@ -349,8 +374,8 @@ server {
 
 # ---- Host 1: accommodation -> housing ----
 server {
-    listen 443 ssl;
-    http2 on;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name accommodation.parisunitedgroup.com;
     include /etc/nginx/snippets/ssl-common.conf;
     include /etc/nginx/snippets/security-headers.conf;
@@ -370,8 +395,8 @@ server {
 
 # ---- Host 2: pugfin -> finance (single Flask app, serves its own static) ----
 server {
-    listen 443 ssl;
-    http2 on;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name pugfin.parisunitedgroup.com;
     include /etc/nginx/snippets/ssl-common.conf;
     include /etc/nginx/snippets/security-headers.conf;
@@ -386,8 +411,8 @@ server {
 
 # ---- Host 3: corporate -> pugweb (the app sets its own CSP, so none here) ----
 server {
-    listen 443 ssl;
-    http2 on;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name parisunitedgroup.com www.parisunitedgroup.com;
     include /etc/nginx/snippets/ssl-common.conf;
     include /etc/nginx/snippets/security-headers.conf;
@@ -437,6 +462,13 @@ server {
 pct enter 112</pre></div>
       <h3>5.2 Base packages: Python 3.11, Node 20, PostgreSQL 17, Redis</h3>
       <div class="code"><button class="copy">Copy</button><pre>apt update && apt -y full-upgrade
+
+# UTF-8 locale BEFORE Postgres so initdb creates a UTF-8 cluster (else you get SQL_ASCII)
+apt install -y locales
+sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+locale-gen
+update-locale LANG=en_US.UTF-8
+
 apt install -y git curl ca-certificates build-essential python3 python3-venv python3-dev libpq-dev redis-server
 
 # Node 20 LTS
@@ -560,6 +592,13 @@ curl -fsS -I http://127.0.0.1:3000 | head -1</pre></div>
 pct enter 113</pre></div>
       <h3>6.2 Base packages (note the extra <code class="inl">libmagic1</code>)</h3>
       <div class="code"><button class="copy">Copy</button><pre>apt update && apt -y full-upgrade
+
+# UTF-8 locale BEFORE Postgres so initdb creates a UTF-8 cluster (else you get SQL_ASCII)
+apt install -y locales
+sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+locale-gen
+update-locale LANG=en_US.UTF-8
+
 apt install -y git curl ca-certificates build-essential python3 python3-venv python3-dev \
                libpq-dev libmagic1 redis-server
 
@@ -716,6 +755,13 @@ curl -fsS -I http://127.0.0.1:3000 | head -1</pre></div>
 pct enter 114</pre></div>
       <h3>7.2 Base packages + PostgreSQL</h3>
       <div class="code"><button class="copy">Copy</button><pre>apt update && apt -y full-upgrade
+
+# UTF-8 locale BEFORE Postgres so initdb creates a UTF-8 cluster (else you get SQL_ASCII)
+apt install -y locales
+sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+locale-gen
+update-locale LANG=en_US.UTF-8
+
 apt install -y git curl ca-certificates build-essential python3 python3-venv python3-dev libpq-dev
 
 install -d /usr/share/postgresql-common/pgdg
