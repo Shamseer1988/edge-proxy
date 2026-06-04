@@ -829,6 +829,7 @@ curl -fsS -I http://127.0.0.1:5000 | head -1</pre></div>
         <small>Move the Postgres data off Docker, point DNS, test every hostname</small></div>
       <div class="chev">▶</div></div>
     <div class="step-body">
+      <p class="tip"><b>Full restore runbook:</b> the complete parameterised copy → restore → migrate → verify procedure — with every gotcha (/tmp perms, empty‑DB recreate, UTF‑8 encoding, ownership remap, post‑restore migration) — lives in <a href="db-restore.md"><code class="inl">docs/db-restore.md</code></a>. The steps below are the quick version.</p>
       <h3>8.1 Move each database from the old Docker setup</h3>
       <p>On the <b>Windows</b> box, dump each running container DB, then restore into the matching CT. (Skip if you're starting fresh / re-seeding.)</p>
       <div class="code"><button class="copy">Copy</button><pre>:: --- on Windows, in each app's folder ---
