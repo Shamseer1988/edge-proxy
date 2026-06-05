@@ -576,12 +576,14 @@ curl -fsS -I http://127.0.0.1:3000 | head -1</pre></div>
   <!-- ============ STEP 6 ============ -->
   <section class="step" data-step="6">
     <div class="step-head"><div class="badge">6</div>
-      <div class="step-title">CT 113 — Housing Control Portal
-        <small>Next.js + Flask + Celery worker + beat + PostgreSQL + Redis</small></div>
+      <div class="step-title">CT 113 — Housing Control Portal (accommodation)
+        <small>waitress + Celery worker/beat + Postgres + Redis, behind the edge nginx CT (topology B)</small></div>
       <div class="chev">▶</div></div>
     <div class="step-body">
-      <h3>6.1 Create &amp; enter (on the host)</h3>
-      <div class="code"><button class="copy">Copy</button><pre>pct create 113 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
+      <p class="note">The repo is already bare‑metal/LXC‑ready (waitress, shipped <code class="inl">deploy/systemd/*</code> units, <code class="inl">scripts/install-linux.sh</code>). This is the <b>topology‑B</b> deploy: the app runs here, the shared edge nginx CT (<code class="inl">.50</code>) fronts it. Repo runbook: <code class="inl">docs/FRESH_DEPLOY_LXC_EDGE.md</code>; DB restore: <a href="db-restore.md"><code class="inl">docs/db-restore.md</code></a>.</p>
+
+      <h3>6.1 Create &amp; enter the container (on the host)</h3>
+      <div class="code"><button class="copy">Copy</button><pre>pct create 113 local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst \
   --hostname housing \
   --cores 4 --memory 4096 --swap 2048 \
   --rootfs local-lvm:40 \
@@ -590,37 +592,43 @@ curl -fsS -I http://127.0.0.1:3000 | head -1</pre></div>
   --unprivileged 1 --features nesting=1 --onboot 1 \
   --password CHANGE_ME --start 1
 pct enter 113</pre></div>
-      <h3>6.2 Base packages (note the extra <code class="inl">libmagic1</code>)</h3>
+
+      <h3>6.2 OS deps — locale FIRST, then PostgreSQL 17 + Redis + libmagic + Node 20</h3>
       <div class="code"><button class="copy">Copy</button><pre>apt update && apt -y full-upgrade
 
-# UTF-8 locale BEFORE Postgres so initdb creates a UTF-8 cluster (else you get SQL_ASCII)
+# UTF-8 locale BEFORE Postgres (so initdb builds a UTF-8 cluster, not SQL_ASCII)
 apt install -y locales
 sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
-locale-gen
-update-locale LANG=en_US.UTF-8
+locale-gen && update-locale LANG=en_US.UTF-8
 
+# build + python 3.11 + libmagic (python-magic) + libpq + redis
 apt install -y git curl ca-certificates build-essential python3 python3-venv python3-dev \
                libpq-dev libmagic1 redis-server
 
+# Node 20 LTS
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt install -y nodejs
 
+# PostgreSQL 17 (PGDG)
 install -d /usr/share/postgresql-common/pgdg
 curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
 echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list
 apt update && apt install -y postgresql-17
 
 systemctl enable --now postgresql redis-server</pre></div>
-      <h3>6.3 Database + app user</h3>
+
+      <h3>6.3 Database + app user + clone</h3>
       <div class="code"><button class="copy">Copy</button><pre>sudo -u postgres psql -c "CREATE USER pug WITH PASSWORD 'CHANGE_ME';"
-sudo -u postgres psql -c "CREATE DATABASE pug_accommodation OWNER pug;"
+sudo -u postgres psql -c "CREATE DATABASE pug_accommodation OWNER pug ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;"
 
 useradd --system --create-home --home-dir /opt/housing --shell /bin/bash housing
 git clone https://github.com/Shamseer1988/Employee-Housing-Control-Portal.git /opt/housing
 chown -R housing:housing /opt/housing</pre></div>
-      <h3>6.4 Backend env</h3>
+
+      <h3>6.4 App env — topology B (bind <code class="inl">0.0.0.0</code> so the edge CT can reach it)</h3>
       <div class="file-label">/opt/housing/backend/.env</div>
-      <div class="code"><button class="copy">Copy</button><pre>FLASK_ENV=production
+      <div class="code"><button class="copy">Copy</button><pre>cat > /opt/housing/backend/.env &lt;&lt;'EOF'
+FLASK_ENV=production
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_USER=pug
@@ -632,106 +640,61 @@ JWT_SECRET_KEY=CHANGE_ME
 JWT_COOKIE_SECURE=true
 JWT_COOKIE_SAMESITE=Lax
 CORS_ORIGINS=https://accommodation.parisunitedgroup.com
-UPLOAD_FOLDER=/opt/housing/data/uploads
-BACKUP_FOLDER=/opt/housing/data/backups
+UPLOAD_FOLDER=/opt/housing/uploads
+BACKUP_FOLDER=/opt/housing/backups
 SUPERUSER_USERNAME=admin
 SUPERUSER_EMAIL=admin@parisunitedgroup.com
 SUPERUSER_PASSWORD=CHANGE_ME
-GUNICORN_WORKERS=4</pre></div>
-      <h3>6.5 Backend install + one-time DB bootstrap</h3>
-      <div class="code"><button class="copy">Copy</button><pre>sudo -u housing bash -lc '
-  cd /opt/housing/backend
-  python3 -m venv .venv
-  .venv/bin/pip install --upgrade pip wheel
-  .venv/bin/pip install -r requirements.txt
-  mkdir -p /opt/housing/data/uploads /opt/housing/data/backups
-  set -a; . ./.env; set +a
-  .venv/bin/flask --app wsgi wait-for-db
-  .venv/bin/flask --app wsgi init-db
-  .venv/bin/flask --app wsgi migrate-all
-  .venv/bin/flask --app wsgi seed
-'</pre></div>
-      <h3>6.6 Frontend build</h3>
-      <div class="file-label">/opt/housing/frontend/.env.production</div>
-      <div class="code"><button class="copy">Copy</button><pre>NODE_ENV=production
-BACKEND_INTERNAL_URL=http://127.0.0.1:5000</pre></div>
-      <div class="code"><button class="copy">Copy</button><pre>sudo -u housing bash -lc 'cd /opt/housing/frontend && npm ci && npm run build'</pre></div>
-      <h3>6.7 systemd units (4: api, frontend, celery worker, celery beat)</h3>
-      <div class="file-label">/etc/systemd/system/housing-backend.service</div>
-      <div class="code"><button class="copy">Copy</button><pre>[Unit]
-Description=Housing Flask API (gunicorn)
-After=network.target postgresql.service redis-server.service
-Wants=postgresql.service redis-server.service
+WAITRESS_LISTEN=0.0.0.0:5000
+WAITRESS_THREADS=8
+EOF</pre></div>
+      <div class="file-label">/opt/housing/frontend/.env.runtime</div>
+      <div class="code"><button class="copy">Copy</button><pre>cat > /opt/housing/frontend/.env.runtime &lt;&lt;'EOF'
+NODE_ENV=production
+HOSTNAME=0.0.0.0
+PORT=3000
+EOF
+chown housing:housing /opt/housing/backend/.env /opt/housing/frontend/.env.runtime
+chmod 600 /opt/housing/backend/.env</pre></div>
 
-[Service]
-Type=simple
-User=housing
-WorkingDirectory=/opt/housing/backend
-EnvironmentFile=/opt/housing/backend/.env
-ExecStart=/opt/housing/backend/.venv/bin/gunicorn -c gunicorn.conf.py wsgi:app
-Restart=always
-RestartSec=5
+      <h3>6.5 Build (venv + deps + frontend) via the repo installer</h3>
+      <div class="code"><button class="copy">Copy</button><pre>sudo -u housing bash -lc 'cd /opt/housing && bash scripts/install-linux.sh'</pre></div>
+      <p class="tip"><code class="inl">install-linux.sh</code> makes the venv, installs requirements, and runs <code class="inl">npm ci && npm run build</code>. It leaves the <code class="inl">.env</code> files you just wrote in place. <code class="inl">next build</code> is RAM‑heavy — 4 GB is enough.</p>
 
-[Install]
-WantedBy=multi-user.target</pre></div>
-      <div class="file-label">/etc/systemd/system/housing-worker.service</div>
-      <div class="code"><button class="copy">Copy</button><pre>[Unit]
-Description=Housing Celery worker
-After=network.target redis-server.service housing-backend.service
-Wants=redis-server.service
+      <h3>6.6 Load the data — restore the dump (or bootstrap fresh)</h3>
+      <p>Push the housing dump in from the host (<code class="inl">pct push 113 C:\path\housing.dump /tmp/housing.dump</code>), then on the CT:</p>
+      <div class="code"><button class="copy">Copy</button><pre>systemctl stop housing-backend housing-worker housing-beat 2>/dev/null
+# DB is freshly created + empty, so restore straight in (remap owner -> pug)
+sudo -u postgres pg_restore --no-owner --role=pug --no-privileges -d pug_accommodation /tmp/housing.dump
+# roll schema to current head
+sudo -u housing bash -lc 'cd /opt/housing/backend && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi migrate-all'</pre></div>
+      <p class="legend">Full restore details (incl. drop/recreate if the DB isn't empty): <a href="db-restore.md"><code class="inl">docs/db-restore.md</code></a>. <b>Fresh deploy (no dump):</b> run the bootstrap instead — <code class="inl">flask --app wsgi wait-for-db && … init-db && … migrate-all && … seed</code>.</p>
 
-[Service]
-Type=simple
-User=housing
-WorkingDirectory=/opt/housing/backend
-EnvironmentFile=/opt/housing/backend/.env
-ExecStart=/opt/housing/backend/.venv/bin/celery -A celery_worker.celery worker --loglevel=info
-Restart=always
-RestartSec=5
+      <h3>6.7 Install the 4 systemd units + the beat state dir</h3>
+      <div class="code"><button class="copy">Copy</button><pre># celery beat writes its schedule here — create it owned by the service user
+install -d -o housing -g housing /var/lib/housing
 
-[Install]
-WantedBy=multi-user.target</pre></div>
-      <div class="file-label">/etc/systemd/system/housing-beat.service</div>
-      <div class="code"><button class="copy">Copy</button><pre>[Unit]
-Description=Housing Celery beat (scheduler)
-After=network.target redis-server.service housing-backend.service
-Wants=redis-server.service
-
-[Service]
-Type=simple
-User=housing
-WorkingDirectory=/opt/housing/backend
-EnvironmentFile=/opt/housing/backend/.env
-ExecStart=/opt/housing/backend/.venv/bin/celery -A celery_worker.celery beat --loglevel=info
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target</pre></div>
-      <div class="file-label">/etc/systemd/system/housing-frontend.service</div>
-      <div class="code"><button class="copy">Copy</button><pre>[Unit]
-Description=Housing Next.js frontend
-After=network.target housing-backend.service
-
-[Service]
-Type=simple
-User=housing
-WorkingDirectory=/opt/housing/frontend
-Environment=NODE_ENV=production
-Environment=BACKEND_INTERNAL_URL=http://127.0.0.1:5000
-ExecStart=/usr/bin/npm run start -- -H 0.0.0.0 -p 3000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target</pre></div>
-      <div class="code"><button class="copy">Copy</button><pre>systemctl daemon-reload
+cp /opt/housing/deploy/systemd/housing-*.service /etc/systemd/system/
+systemctl daemon-reload
 systemctl enable --now housing-backend housing-worker housing-beat housing-frontend
-systemctl status housing-backend housing-frontend --no-pager
+systemctl status housing-backend housing-frontend --no-pager | head</pre></div>
 
-curl -fsS http://127.0.0.1:5000/api/v1/health && echo " API OK"
-curl -fsS -I http://127.0.0.1:3000 | head -1</pre></div>
-      <p class="legend">Type <code class="inl">exit</code> to leave the container.</p>
+      <h3>6.8 Verify — locally and from the edge CT</h3>
+      <div class="code"><button class="copy">Copy</button><pre># on the housing CT — bound on 0.0.0.0 (not loopback)?
+ss -tlnp | grep -E ':(5000|3000) '
+curl -fsS http://127.0.0.1:5000/api/v1/health && echo
+
+# from the EDGE nginx CT (.50) — reachable over the LAN?
+curl -fsS http://192.168.100.52:5000/api/v1/health && echo
+curl -I   http://192.168.100.52:3000 | head -1</pre></div>
+      <p class="tip">The edge nginx CT's <code class="inl">lxc/nginx.conf</code> already has the accommodation vhost → <code class="inl">192.168.100.52:5000/3000</code>. Just confirm the tunnel hostname <code class="inl">accommodation.parisunitedgroup.com</code> points at the edge CT (<code class="inl">https://192.168.100.50:443</code>), then <code class="inl">curl -I https://accommodation.parisunitedgroup.com/health</code> → 200.</p>
+
+      <h3>6.9 (Recommended) Lock the app CT down</h3>
+      <p>Only the edge CT should reach <code class="inl">:5000/:3000</code>. The full nftables ruleset is in the repo's <code class="inl">docs/FRESH_DEPLOY_LXC_EDGE.md</code> (Phase 7) — the gist:</p>
+      <div class="code"><button class="copy">Copy</button><pre>apt install -y nftables
+# allow 5000/3000 ONLY from the edge CT (192.168.100.50); drop other LAN access
+# (full nftables table in FRESH_DEPLOY_LXC_EDGE.md Phase 7)</pre></div>
+
       <label class="markdone"><input type="checkbox"> Mark this step complete</label>
     </div>
   </section>
