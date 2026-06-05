@@ -752,13 +752,15 @@ systemctl enable --now postgresql</pre></div>
       <div class="code"><button class="copy">Copy</button><pre>sudo -u postgres psql -c "CREATE USER pugfin WITH PASSWORD 'CHANGE_ME';"
 sudo -u postgres psql -c "CREATE DATABASE pugfin_db OWNER pugfin ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;"
 
+# Code lives in /opt/pugfin/Apps (the git tree); persistent DATA lives in SIBLING
+# folders (uploads/logs/backups/instance) so `git pull` never touches your data.
 useradd --system --create-home --home-dir /opt/pugfin --shell /bin/bash pugfin
-git clone https://github.com/Shamseer1988/PUGFinanceApp.git /opt/pugfin
+git clone https://github.com/Shamseer1988/PUGFinanceApp.git /opt/pugfin/Apps
 chown -R pugfin:pugfin /opt/pugfin</pre></div>
 
       <h3>7.4 App env (production)</h3>
-      <div class="file-label">/opt/pugfin/.env</div>
-      <div class="code"><button class="copy">Copy</button><pre>cat > /opt/pugfin/.env &lt;&lt;'EOF'
+      <div class="file-label">/opt/pugfin/Apps/.env</div>
+      <div class="code"><button class="copy">Copy</button><pre>cat > /opt/pugfin/Apps/.env &lt;&lt;'EOF'
 FLASK_CONFIG=production
 SECRET_KEY=CHANGE_ME
 DATABASE_URL=postgresql+psycopg2://pugfin:CHANGE_ME@localhost:5432/pugfin_db
@@ -776,12 +778,12 @@ INSTANCE_FOLDER=/opt/pugfin/instance
 EOF
 mkdir -p /opt/pugfin/uploads /opt/pugfin/logs /opt/pugfin/backups /opt/pugfin/instance
 chown -R pugfin:pugfin /opt/pugfin
-chmod 600 /opt/pugfin/.env</pre></div>
+chmod 600 /opt/pugfin/Apps/.env</pre></div>
       <p class="tip"><b>Two required keys:</b> <code class="inl">FLASK_CONFIG=production</code> (the factory defaults to <code class="inl">dev</code> with a bare <code class="inl">waitress-serve --call</code>), and <code class="inl">INITIAL_ADMIN_PASSWORD</code> (the production seed refuses to run without it — it's the first password for the <code class="inl">admin</code> user, forced to change on first login).</p>
 
       <h3>7.5 venv + deps + schema + seed (fresh DB)</h3>
       <div class="code"><button class="copy">Copy</button><pre>sudo -u pugfin bash -lc '
-  cd /opt/pugfin
+  cd /opt/pugfin/Apps
   python3 -m venv .venv
   .venv/bin/pip install --upgrade pip wheel
   .venv/bin/pip install -r requirements.txt
@@ -803,9 +805,9 @@ Wants=postgresql.service
 Type=simple
 User=pugfin
 Group=pugfin
-WorkingDirectory=/opt/pugfin
-EnvironmentFile=/opt/pugfin/.env
-ExecStart=/opt/pugfin/.venv/bin/waitress-serve --host=0.0.0.0 --port=5000 --threads=8 --call app:create_app
+WorkingDirectory=/opt/pugfin/Apps
+EnvironmentFile=/opt/pugfin/Apps/.env
+ExecStart=/opt/pugfin/Apps/.venv/bin/waitress-serve --host=0.0.0.0 --port=5000 --threads=8 --call app:create_app
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -819,6 +821,9 @@ EOF
 systemctl daemon-reload
 systemctl enable --now pugfin
 systemctl status pugfin --no-pager | head</pre></div>
+      <p class="tip"><b>Updating later</b> only touches <code class="inl">Apps/</code> — your data folders are never in the git tree:</p>
+      <div class="code"><button class="copy">Copy</button><pre>sudo -u pugfin bash -lc 'cd /opt/pugfin/Apps && git pull && .venv/bin/pip install -r requirements.txt && set -a && . ./.env && set +a && .venv/bin/flask --app "app:create_app()" db upgrade'
+systemctl restart pugfin</pre></div>
 
       <h3>7.7 Verify — locally and from the edge CT</h3>
       <div class="code"><button class="copy">Copy</button><pre># on the finance CT — bound on 0.0.0.0?
