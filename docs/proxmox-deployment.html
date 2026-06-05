@@ -713,11 +713,13 @@ curl -I   http://192.168.100.52:3000 | head -1</pre></div>
   <section class="step" data-step="7">
     <div class="step-head"><div class="badge">7</div>
       <div class="step-title">CT 114 — Finance / PUG Accounts (PUGFinanceApp)
-        <small>Flask + PostgreSQL, served by waitress. No Node, no Redis, no build.</small></div>
+        <small>Flask + waitress + PostgreSQL — the leanest CT: no Node, no Redis, no Celery, no build</small></div>
       <div class="chev">▶</div></div>
     <div class="step-body">
-      <h3>7.1 Create &amp; enter (on the host)</h3>
-      <div class="code"><button class="copy">Copy</button><pre>pct create 114 local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
+      <p class="note">No code refactor needed — <code class="inl">serve.py</code> already binds <code class="inl">0.0.0.0</code> and <code class="inl">config.py</code> reads <code class="inl">DATABASE_URL</code> from <code class="inl">.env</code>. The repo ships no systemd unit, so we add the single waitress one below. Repo install reference: <code class="inl">Markdown/INSTALLATION.md</code>.</p>
+
+      <h3>7.1 Create &amp; enter the container (on the host)</h3>
+      <div class="code"><button class="copy">Copy</button><pre>pct create 114 local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst \
   --hostname pugfin \
   --cores 2 --memory 2048 --swap 1024 \
   --rootfs local-lvm:20 \
@@ -726,39 +728,58 @@ curl -I   http://192.168.100.52:3000 | head -1</pre></div>
   --unprivileged 1 --features nesting=1 --onboot 1 \
   --password CHANGE_ME --start 1
 pct enter 114</pre></div>
-      <h3>7.2 Base packages + PostgreSQL</h3>
+
+      <h3>7.2 OS deps — locale FIRST, then PostgreSQL 17 (no Node / Redis / libmagic)</h3>
       <div class="code"><button class="copy">Copy</button><pre>apt update && apt -y full-upgrade
 
-# UTF-8 locale BEFORE Postgres so initdb creates a UTF-8 cluster (else you get SQL_ASCII)
+# UTF-8 locale BEFORE Postgres (so initdb builds a UTF-8 cluster)
 apt install -y locales
 sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
-locale-gen
-update-locale LANG=en_US.UTF-8
+locale-gen && update-locale LANG=en_US.UTF-8
 
+# python 3.11 + build + libpq + git
 apt install -y git curl ca-certificates build-essential python3 python3-venv python3-dev libpq-dev
 
+# PostgreSQL 17 (PGDG)
 install -d /usr/share/postgresql-common/pgdg
 curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
 echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list
 apt update && apt install -y postgresql-17
+
 systemctl enable --now postgresql</pre></div>
-      <h3>7.3 Database + app user</h3>
+
+      <h3>7.3 Database + app user + clone</h3>
       <div class="code"><button class="copy">Copy</button><pre>sudo -u postgres psql -c "CREATE USER pugfin WITH PASSWORD 'CHANGE_ME';"
-sudo -u postgres psql -c "CREATE DATABASE pugfin_db OWNER pugfin;"
+sudo -u postgres psql -c "CREATE DATABASE pugfin_db OWNER pugfin ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;"
 
 useradd --system --create-home --home-dir /opt/pugfin --shell /bin/bash pugfin
 git clone https://github.com/Shamseer1988/PUGFinanceApp.git /opt/pugfin
 chown -R pugfin:pugfin /opt/pugfin</pre></div>
-      <h3>7.4 Env</h3>
+
+      <h3>7.4 App env (production)</h3>
       <div class="file-label">/opt/pugfin/.env</div>
-      <div class="code"><button class="copy">Copy</button><pre>FLASK_CONFIG=production
+      <div class="code"><button class="copy">Copy</button><pre>cat > /opt/pugfin/.env &lt;&lt;'EOF'
+FLASK_CONFIG=production
 SECRET_KEY=CHANGE_ME
 DATABASE_URL=postgresql+psycopg2://pugfin:CHANGE_ME@localhost:5432/pugfin_db
+INITIAL_ADMIN_PASSWORD=CHANGE_ME
+SESSION_COOKIE_SECURE=true
+REMEMBER_COOKIE_SECURE=true
+TRUSTED_PROXY_COUNT=1
 HOST=0.0.0.0
 PORT=5000
 WAITRESS_THREADS=8
-# OPENAI_API_KEY=... (if the AI features are used)</pre></div>
-      <h3>7.5 Install + migrate</h3>
+UPLOAD_FOLDER=/opt/pugfin/uploads
+LOG_FOLDER=/opt/pugfin/logs
+BACKUP_FOLDER=/opt/pugfin/backups
+INSTANCE_FOLDER=/opt/pugfin/instance
+EOF
+mkdir -p /opt/pugfin/uploads /opt/pugfin/logs /opt/pugfin/backups /opt/pugfin/instance
+chown -R pugfin:pugfin /opt/pugfin
+chmod 600 /opt/pugfin/.env</pre></div>
+      <p class="tip"><b>Two required keys:</b> <code class="inl">FLASK_CONFIG=production</code> (the factory defaults to <code class="inl">dev</code> with a bare <code class="inl">waitress-serve --call</code>), and <code class="inl">INITIAL_ADMIN_PASSWORD</code> (the production seed refuses to run without it — it's the first password for the <code class="inl">admin</code> user, forced to change on first login).</p>
+
+      <h3>7.5 venv + deps + schema + seed (fresh DB)</h3>
       <div class="code"><button class="copy">Copy</button><pre>sudo -u pugfin bash -lc '
   cd /opt/pugfin
   python3 -m venv .venv
@@ -766,11 +787,14 @@ WAITRESS_THREADS=8
   .venv/bin/pip install -r requirements.txt
   set -a; . ./.env; set +a
   .venv/bin/flask --app "app:create_app()" db upgrade
+  .venv/bin/python seed_data.py
 '</pre></div>
-      <p class="legend">If a first-run admin/seed is needed, the repo ships <code class="inl">init_db.py</code> / <code class="inl">seed_data.py</code> — run <code class="inl">.venv/bin/python init_db.py</code> once (check the repo README for exact seeding).</p>
-      <h3>7.6 systemd unit (waitress)</h3>
+      <p class="legend"><b>Migrating instead (have a dump):</b> restore <code class="inl">pugfin_db</code> per <a href="db-restore.md"><code class="inl">docs/db-restore.md</code></a> (owner <code class="inl">pugfin</code>), then <code class="inl">flask --app "app:create_app()" db upgrade</code> — and skip <code class="inl">seed_data.py</code>.</p>
+
+      <h3>7.6 systemd unit (single waitress service, bind 0.0.0.0)</h3>
       <div class="file-label">/etc/systemd/system/pugfin.service</div>
-      <div class="code"><button class="copy">Copy</button><pre>[Unit]
+      <div class="code"><button class="copy">Copy</button><pre>cat > /etc/systemd/system/pugfin.service &lt;&lt;'EOF'
+[Unit]
 Description=PUG Finance / Accounts (Flask via waitress)
 After=network.target postgresql.service
 Wants=postgresql.service
@@ -778,19 +802,42 @@ Wants=postgresql.service
 [Service]
 Type=simple
 User=pugfin
+Group=pugfin
 WorkingDirectory=/opt/pugfin
 EnvironmentFile=/opt/pugfin/.env
 ExecStart=/opt/pugfin/.venv/bin/waitress-serve --host=0.0.0.0 --port=5000 --threads=8 --call app:create_app
-Restart=always
+Restart=on-failure
 RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
-WantedBy=multi-user.target</pre></div>
-      <div class="code"><button class="copy">Copy</button><pre>systemctl daemon-reload
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
 systemctl enable --now pugfin
-systemctl status pugfin --no-pager
-curl -fsS -I http://127.0.0.1:5000 | head -1</pre></div>
-      <p class="legend">Type <code class="inl">exit</code> to leave the container.</p>
+systemctl status pugfin --no-pager | head</pre></div>
+
+      <h3>7.7 Verify — locally and from the edge CT</h3>
+      <div class="code"><button class="copy">Copy</button><pre># on the finance CT — bound on 0.0.0.0?
+ss -tlnp | grep ':5000 '
+curl -fsS -I http://127.0.0.1:5000 | head -1     # 200 or 302 (login redirect)
+
+# from the EDGE nginx CT (.50):
+curl -I http://192.168.100.53:5000 | head -1</pre></div>
+
+      <h3>7.8 DNS + tunnel → go live</h3>
+      <p>The edge nginx CT already has the pugfin vhost → <code class="inl">192.168.100.53:5000</code>. Two cutover steps (the same pair that tripped up accommodation):</p>
+      <ol>
+        <li><b>DNS:</b> Cloudflare → DNS → Records — make sure a <b>proxied</b> record for <code class="inl">pugfin</code> exists (CNAME → the tunnel), like <code class="inl">parisunitedgroup.com</code> has. Add it if missing.</li>
+        <li><b>Tunnel:</b> Public Hostnames → <code class="inl">pugfin.parisunitedgroup.com</code> → Service <code class="inl">https://192.168.100.50:443</code>, Origin Server Name <code class="inl">pugfin.parisunitedgroup.com</code>.</li>
+      </ol>
+      <div class="code"><button class="copy">Copy</button><pre>curl -I https://pugfin.parisunitedgroup.com/health     # 200
+# then open the site and log in:  admin  /  INITIAL_ADMIN_PASSWORD  (forced change on first login)</pre></div>
+      <p class="tip">(Recommended) firewall the CT so <code class="inl">:5000</code> is reachable only from the edge CT <code class="inl">192.168.100.50</code> — same nftables pattern as housing.</p>
+
       <label class="markdone"><input type="checkbox"> Mark this step complete</label>
     </div>
   </section>
