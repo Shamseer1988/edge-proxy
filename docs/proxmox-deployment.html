@@ -663,14 +663,22 @@ chmod 600 /opt/housing/backend/.env</pre></div>
 sudo -u housing bash -lc 'export PATH=/usr/sbin:$PATH; cd /opt/housing && bash scripts/install-linux.sh'</pre></div>
       <p class="tip"><code class="inl">install-linux.sh</code> makes the venv, installs requirements, and runs <code class="inl">npm ci && npm run build</code>. It leaves the <code class="inl">.env</code> files you just wrote in place. <code class="inl">next build</code> is RAM‑heavy — 4 GB is enough.</p>
 
-      <h3>6.6 Load the data — restore the dump (or bootstrap fresh)</h3>
-      <p>Push the housing dump in from the host (<code class="inl">pct push 113 C:\path\housing.dump /tmp/housing.dump</code>), then on the CT:</p>
+      <h3>6.6 Load the data — pick ONE path</h3>
+      <p><b>A) Migrating (you have a dump):</b> push it from the host (<code class="inl">pct push 113 C:\path\housing.dump /tmp/housing.dump</code>), then on the CT:</p>
       <div class="code"><button class="copy">Copy</button><pre>systemctl stop housing-backend housing-worker housing-beat 2>/dev/null
 # DB is freshly created + empty, so restore straight in (remap owner -> pug)
 sudo -u postgres pg_restore --no-owner --role=pug --no-privileges -d pug_accommodation /tmp/housing.dump
 # roll schema to current head
 sudo -u housing bash -lc 'cd /opt/housing/backend && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi migrate-all'</pre></div>
-      <p class="legend">Full restore details (incl. drop/recreate if the DB isn't empty): <a href="db-restore.md"><code class="inl">docs/db-restore.md</code></a>. <b>Fresh deploy (no dump):</b> run the bootstrap instead — <code class="inl">flask --app wsgi wait-for-db && … init-db && … migrate-all && … seed</code>.</p>
+      <p class="legend">Full restore details (incl. drop/recreate if the DB isn't empty): <a href="db-restore.md"><code class="inl">docs/db-restore.md</code></a>.</p>
+
+      <p><b>B) Fresh deploy (NO dump):</b> the empty DB has no tables yet — build the schema and seed the superuser, or login 500s with <code class="inl">relation "users" does not exist</code> (<code class="inl">/health</code> still passes, since it only checks DB connectivity):</p>
+      <div class="code"><button class="copy">Copy</button><pre>sudo -u housing bash -lc 'cd /opt/housing/backend && set -a && . ./.env && set +a && \
+  .venv/bin/flask --app wsgi wait-for-db && \
+  .venv/bin/flask --app wsgi init-db && \
+  .venv/bin/flask --app wsgi migrate-all && \
+  .venv/bin/flask --app wsgi seed'</pre></div>
+      <p class="tip">Then sign in as the seeded superuser — username <code class="inl">admin</code>, password = your <code class="inl">SUPERUSER_PASSWORD</code> from <code class="inl">.env</code> (the login page hints this). Other users (e.g. your own) are created from the admin panel afterwards.</p>
 
       <h3>6.7 Install the 4 systemd units + the beat state dir</h3>
       <div class="code"><button class="copy">Copy</button><pre># celery beat writes its schedule here — create it owned by the service user
