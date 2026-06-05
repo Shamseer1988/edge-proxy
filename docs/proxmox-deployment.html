@@ -658,7 +658,9 @@ chown housing:housing /opt/housing/backend/.env /opt/housing/frontend/.env.runti
 chmod 600 /opt/housing/backend/.env</pre></div>
 
       <h3>6.5 Build (venv + deps + frontend) via the repo installer</h3>
-      <div class="code"><button class="copy">Copy</button><pre>sudo -u housing bash -lc 'cd /opt/housing && bash scripts/install-linux.sh'</pre></div>
+      <div class="code"><button class="copy">Copy</button><pre># install-linux.sh checks for libmagic via `ldconfig`, which lives in /usr/sbin —
+# not on a non-root login shell's PATH by default, so add it for this run:
+sudo -u housing bash -lc 'export PATH=/usr/sbin:$PATH; cd /opt/housing && bash scripts/install-linux.sh'</pre></div>
       <p class="tip"><code class="inl">install-linux.sh</code> makes the venv, installs requirements, and runs <code class="inl">npm ci && npm run build</code>. It leaves the <code class="inl">.env</code> files you just wrote in place. <code class="inl">next build</code> is RAM‑heavy — 4 GB is enough.</p>
 
       <h3>6.6 Load the data — restore the dump (or bootstrap fresh)</h3>
