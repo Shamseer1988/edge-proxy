@@ -764,7 +764,8 @@ chown -R pugfin:pugfin /opt/pugfin</pre></div>
 FLASK_CONFIG=production
 SECRET_KEY=CHANGE_ME
 DATABASE_URL=postgresql+psycopg2://pugfin:CHANGE_ME@localhost:5432/pugfin_db
-INITIAL_ADMIN_PASSWORD=CHANGE_ME
+SUBSCRIPTION_ADMIN_USERNAME=subscription_admin
+SUBSCRIPTION_ADMIN_PASSWORD=CHANGE_ME
 SESSION_COOKIE_SECURE=true
 REMEMBER_COOKIE_SECURE=true
 TRUSTED_PROXY_COUNT=1
@@ -779,7 +780,7 @@ EOF
 mkdir -p /opt/pugfin/uploads /opt/pugfin/logs /opt/pugfin/backups /opt/pugfin/instance
 chown -R pugfin:pugfin /opt/pugfin
 chmod 600 /opt/pugfin/Apps/.env</pre></div>
-      <p class="tip"><b>Two required keys:</b> <code class="inl">FLASK_CONFIG=production</code> (the factory defaults to <code class="inl">dev</code> with a bare <code class="inl">waitress-serve --call</code>), and <code class="inl">INITIAL_ADMIN_PASSWORD</code> (the production seed refuses to run without it — it's the first password for the <code class="inl">admin</code> user, forced to change on first login).</p>
+      <p class="tip"><b>Two required keys:</b> <code class="inl">FLASK_CONFIG=production</code> (the factory defaults to <code class="inl">dev</code> with a bare <code class="inl">waitress-serve --call</code>), and <code class="inl">SUBSCRIPTION_ADMIN_PASSWORD</code> (the production seed refuses to run without it — the first password for the vendor <code class="inl">subscription_admin</code>, forced to change on first login; <code class="inl">INITIAL_ADMIN_PASSWORD</code> is accepted as a legacy alias). PUGFinApp is a <b>multi‑company subscription platform</b>: a fresh seed creates <em>only</em> the vendor admin + RBAC — you create the actual companies from the Subscription Portal after first login (see 7.8).</p>
 
       <h3>7.5 venv + deps + schema + seed (fresh DB)</h3>
       <div class="code"><button class="copy">Copy</button><pre>sudo -u pugfin bash -lc '
@@ -840,7 +841,10 @@ curl -I http://192.168.100.53:5000 | head -1</pre></div>
         <li><b>Tunnel:</b> Public Hostnames → <code class="inl">pugfin.parisunitedgroup.com</code> → Service <code class="inl">https://192.168.100.50:443</code>, Origin Server Name <code class="inl">pugfin.parisunitedgroup.com</code>.</li>
       </ol>
       <div class="code"><button class="copy">Copy</button><pre>curl -I https://pugfin.parisunitedgroup.com/health     # 200
-# then open the site and log in:  admin  /  INITIAL_ADMIN_PASSWORD  (forced change on first login)</pre></div>
+# then open the site and sign in as the VENDOR admin:
+#   subscription_admin  /  SUBSCRIPTION_ADMIN_PASSWORD   (forced change on first login)</pre></div>
+      <p class="note"><b>First run is the Subscription Portal, not an accounting company.</b> The fresh seed created only <code class="inl">subscription_admin</code> + RBAC — no company, no data. After signing in you land at <code class="inl">/subscription</code>: create a <b>Plan</b>, then a <b>Company</b> (which auto‑provisions its chart of accounts + the company‑admin user), then give that company‑admin the normal <code class="inl">/login</code> URL. Full walkthrough: the repo's <code class="inl">SETUP_GUIDE.html</code> / <code class="inl">docs/SUBSCRIPTION_AND_MULTI_COMPANY.md</code>.</p>
+      <p class="legend"><b>Optional — signed license keys:</b> only needed to issue a portable license artifact (plans/modules are enforced from the DB regardless). Generate an Ed25519 keypair with <code class="inl">/opt/pugfin/Apps/.venv/bin/python -c "from services.license_signing import generate_keypair; …"</code>, put the PEMs in <code class="inl">LICENSE_SIGNING_PRIVATE_KEY</code> / <code class="inl">LICENSE_SIGNING_PUBLIC_KEY</code> in <code class="inl">.env</code>, then <code class="inl">systemctl restart pugfin</code>.</p>
       <p class="tip">(Recommended) firewall the CT so <code class="inl">:5000</code> is reachable only from the edge CT <code class="inl">192.168.100.50</code> — same nftables pattern as housing.</p>
 
       <label class="markdone"><input type="checkbox"> Mark this step complete</label>
