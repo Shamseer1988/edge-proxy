@@ -119,7 +119,8 @@ fi
 # ---- 6. health checks ----
 check() {  # label  url
   for _ in $(seq 1 15); do
-    if curl -fsS -o /dev/null "$2"; then echo "    OK   $1"; return 0; fi
+    # quiet during the boot window; only the final FAIL line below is shown
+    if curl -fs -o /dev/null "$2" 2>/dev/null; then echo "    OK   $1"; return 0; fi
     sleep 2
   done
   echo "    FAIL $1  ($2)"; return 1
