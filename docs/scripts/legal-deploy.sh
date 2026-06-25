@@ -47,6 +47,17 @@ if [ "${SKIP_FRONTEND:-0}" != 1 ] && [ ! -f "$APP_DIR/frontend/.env.production" 
      Create it (NEXT_PUBLIC_API_URL=https://legal.parisunitedgroup.com) or set SKIP_FRONTEND=1."
 fi
 
+# ---- 0. normalize ownership (self-heal) ----
+# A stray root-run 'git'/edit under $APP_DIR leaves root-owned files that block
+# the pug-user pull/build (e.g. "cannot open '.git/FETCH_HEAD': Permission
+# denied"). Re-own anything misowned, skipping node_modules/.venv (npm ci / pip
+# rebuild those as $APP_USER, so chowning them would just be wasted work).
+log "Normalizing ownership under $APP_DIR"
+find "$APP_DIR" \
+     -path "$APP_DIR/frontend/node_modules" -prune -o \
+     -path "$APP_DIR/backend/.venv" -prune -o \
+     ! -user "$APP_USER" -print0 | xargs -0r chown -h "$APP_USER:$APP_USER"
+
 # ---- 1. pre-migrate DB backup (rollback safety) ----
 if [ "${SKIP_BACKUP:-0}" != 1 ] && [ "${SKIP_BACKEND:-0}" != 1 ]; then
   log "Backing up database '$DB_NAME'"
