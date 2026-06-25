@@ -1019,7 +1019,7 @@ chown -R pug:pug /opt/pug-legal</pre></div>
       <h3>9.4 Backend env</h3>
       <div class="file-label">/etc/pug-legal/.env  (backend; systemd reads it via EnvironmentFile)</div>
       <div class="code"><button class="copy">Copy</button><pre>cat > /etc/pug-legal/.env &lt;&lt;'EOF'
-APP_NAME=PUG Legal Case Filing System
+APP_NAME="PUG Legal Case Filing System"
 APP_ENV=production
 APP_DEBUG=false
 APP_SECRET_KEY=CHANGE_ME
@@ -1030,7 +1030,7 @@ STORAGE_LOCAL_PATH=/var/lib/pug-legal/storage
 BACKUP_LOCAL_PATH=/var/lib/pug-legal/backups
 BACKUP_ENCRYPTION_KEY=CHANGE_ME
 CORS_ORIGINS=https://legal.parisunitedgroup.com
-BRAND_COMPANY_NAME=Paris United Group
+BRAND_COMPANY_NAME="Paris United Group"
 BRAND_APP_URL=https://legal.parisunitedgroup.com
 SECURITY_HEADERS_ENABLED=true
 # seed admin — read by 'python -m app.services.seed'; NOT in .env.example
@@ -1039,7 +1039,7 @@ SEED_ADMIN_EMAIL=admin@parisunitedgroup.com
 SEED_ADMIN_PASSWORD=CHANGE_ME
 EOF
 chown pug:pug /etc/pug-legal/.env && chmod 600 /etc/pug-legal/.env</pre></div>
-      <p class="tip"><b>Three secrets to generate:</b> <code class="inl">APP_SECRET_KEY</code> (<code class="inl">openssl rand -hex 32</code> — signs JWTs), <code class="inl">BACKUP_ENCRYPTION_KEY</code> (<code class="inl">openssl rand -base64 32</code> — encrypts DB backups), and the DB password. <code class="inl">DATABASE_URL</code> uses the <b>psycopg v3</b> dialect <code class="inl">postgresql+psycopg://</code> (NOT <code class="inl">psycopg2</code>). The SPA calls the API <b>cross‑origin</b> at this same public origin, so <code class="inl">CORS_ORIGINS</code> must list <code class="inl">https://legal.parisunitedgroup.com</code>.</p>
+      <p class="tip"><b>Three secrets to generate:</b> <code class="inl">APP_SECRET_KEY</code> (<code class="inl">openssl rand -hex 32</code> — signs JWTs), <code class="inl">BACKUP_ENCRYPTION_KEY</code> (<code class="inl">openssl rand -base64 32</code> — encrypts DB backups), and the DB password. <code class="inl">DATABASE_URL</code> uses the <b>psycopg v3</b> dialect <code class="inl">postgresql+psycopg://</code> (NOT <code class="inl">psycopg2</code>). The SPA calls the API <b>cross‑origin</b> at this same public origin, so <code class="inl">CORS_ORIGINS</code> must list <code class="inl">https://legal.parisunitedgroup.com</code>. <b>Quote any value containing spaces</b> (<code class="inl">APP_NAME</code>, <code class="inl">BRAND_COMPANY_NAME</code>) — the manual <code class="inl">. ./.env</code> sourcing in 9.5 word-splits unquoted spaces (the shell prints <code class="inl">command not found</code>; <code class="inl">DATABASE_URL</code>/<code class="inl">SEED_ADMIN_*</code> have none, so migrate + seed still run), and systemd&#39;s <code class="inl">EnvironmentFile</code> honors the quotes too. Keep <code class="inl">APP_SECRET_KEY</code> a space-free hex string.</p>
 
       <h3>9.5 Build — backend (venv + migrate + seed), then frontend</h3>
       <div class="file-label">/opt/pug-legal/frontend/.env.production  (baked into the build)</div>
@@ -1063,6 +1063,7 @@ chown pug:pug /opt/pug-legal/frontend/.env.production</pre></div>
   npm run build
 '</pre></div>
       <p class="legend"><code class="inl">NEXT_PUBLIC_*</code> is a <b>build‑time</b> constant — compiled into the JS at <code class="inl">npm run build</code>, so it must be set <em>before</em> building, not just in the service env. The app appends <code class="inl">/api/v1/...</code> itself, so the value is the bare origin (no <code class="inl">/api</code> suffix).</p>
+      <p class="warn"><b>Next build fails on lint?</b> Next.js runs ESLint inside <code class="inl">next build</code> and treats rule violations (e.g. <code class="inl">react/no-unescaped-entities</code> — a literal <code class="inl">"</code> in JSX) as <b>hard errors</b> that abort with <code class="inl">Failed to compile</code> and produce no build. Rebuild with <code class="inl">npm run build -- --no-lint</code>, or set <code class="inl">eslint: { ignoreDuringBuilds: true }</code> in the app's <code class="inl">next.config.js</code> and commit it upstream so redeploys keep building.</p>
 
       <h3>9.6 systemd units — copy the shipped ones, apply the topology‑B edits</h3>
       <p>The repo ships <code class="inl">pug-backend.service</code> + <code class="inl">pug-frontend.service</code>, but they bind <code class="inl">127.0.0.1</code> (they assume nginx on the same host). Here the edge nginx is a <b>separate CT</b>, so both must bind <code class="inl">0.0.0.0</code>:</p>
