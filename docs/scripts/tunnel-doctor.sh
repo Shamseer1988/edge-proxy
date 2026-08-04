@@ -184,8 +184,35 @@ else
     fi
   fi
 
+  # ---- ARP conflict on the tunnel CT's own address
+  #      A contested .49 makes cloudflared flap forever and reads as "Degraded".
+  #      This was the real cause of the 2026-08-04 outage — check it before
+  #      blaming DNS or the clock. See docs/app-disconnections.md.
+  sec "5a. CT $CT_TUNNEL address uniqueness (IP conflict = permanent 'Degraded')"
+  tun_ip=$(pct config "$CT_TUNNEL" | grep -oE 'ip=[0-9.]+' | head -1 | cut -d= -f2)
+  tun_ip=${tun_ip:-192.168.100.49}
+  if command -v arping >/dev/null; then
+    macs=$(arping -c 6 -w 4 -I vmbr0 "$tun_ip" 2>/dev/null \
+           | grep -oiE '([0-9a-f]{2}:){5}[0-9a-f]{2}' | sort -u)
+    n=$(printf '%s\n' "$macs" | grep -c .)
+    if [ "${n:-0}" -gt 1 ]; then
+      bad "$tun_ip is claimed by $n DIFFERENT MACs — IP CONFLICT, cloudflared cannot stay connected:"
+      printf '%s\n' "$macs" | sed 's/^/           /'
+      fix "BC:24:11:* is the Proxmox OUI (your CT); anything else is a rogue device"
+      fix "move the router's DHCP pool clear of the whole .49-.55 static range"
+      fix "full procedure: docs/app-disconnections.md"
+    elif [ "${n:-0}" -eq 1 ]; then
+      ok "$tun_ip answered by a single MAC ($macs)"
+    else
+      warn "$tun_ip did not answer ARP (CT stopped?)"
+    fi
+  else
+    warn "arping not installed — cannot rule out an IP conflict on $tun_ip"
+    fix "apt install -y iputils-arping && rerun (this was the 2026-08-04 root cause)"
+  fi
+
   # ---- egress
-  sec "5. CT $CT_TUNNEL outbound reachability"
+  sec "5b. CT $CT_TUNNEL outbound reachability"
   if inct "$CT_TUNNEL" 'getent hosts region1.v2.argotunnel.com' >/dev/null; then
     ok "DNS resolves region1.v2.argotunnel.com"
   else

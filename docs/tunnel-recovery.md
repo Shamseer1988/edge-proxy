@@ -45,6 +45,12 @@ connection to send your request down.
 
 ## 2. Ranked causes, most likely first for *this* failure
 
+> **Resolved for the 2026-08-04 outage: it was §2.7 — an IP conflict on
+> `192.168.100.49`.** A foreign device (`C8:9E:43:B8:7F:1D`) was answering ARP
+> for the cloudflared CT, so its edge connections flapped indefinitely and the
+> tunnel sat at *Degraded*. Check that first; full write-up in
+> [`app-disconnections.md` §0](app-disconnections.md).
+
 Given "PC lost power → tunnel degraded", in the order I'd check them:
 
 ### 2.1 cloudflared was never a systemd service (most common)
@@ -179,6 +185,30 @@ cloudflared service uninstall
 cloudflared service install <CURRENT_TOKEN>
 systemctl enable --now cloudflared
 ```
+
+### 2.7 IP conflict on the tunnel CT's address — *the actual 2026-08-04 cause*
+
+If another device on the LAN also claims `192.168.100.49`, the two trade the
+address in every ARP cache on the segment. cloudflared's return traffic then
+lands on the wrong device about half the time: connections register, drop, and
+re-register forever, which is precisely the *Degraded* state.
+
+This is easy to mistake for causes 2.3/2.4 because the logs look the same —
+handshake timeouts and failed dials. The distinguishing test takes ten seconds,
+run from the Proxmox host (which does not own the address):
+
+```bash
+apt install -y iputils-arping
+arping -c 10 -I vmbr0 192.168.100.49 | grep -oiE '([0-9a-f]{2}:){5}[0-9a-f]{2}' | sort -u
+```
+
+**Exactly one `BC:24:11:*` MAC (the Proxmox OUI) = fine. Two or more = this is
+your bug**, and no amount of restarting cloudflared will fix it. A power cut
+triggers it because the router reboots and re-leases addresses.
+
+The fix is at the router — move the DHCP pool clear of `.49`–`.55` entirely.
+Details, including how to tell a rogue client from a proxy-ARPing router, in
+[`app-disconnections.md`](app-disconnections.md).
 
 ## 3. Real config gaps in this repo (found during review)
 

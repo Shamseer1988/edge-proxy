@@ -12,6 +12,68 @@ ssh root@192.168.100.10 'chmod +x /root/net-doctor.sh && apt install -y iputils-
 Intermittent faults hide from point-in-time checks. If it comes back clean,
 leave `./net-doctor.sh --watch` running in a terminal until a drop happens.
 
+> **This has already happened once — see [§0, the 2026-08-04 incident](#0-incident-log--2026-08-04-ip-conflict-on-19216810049).
+> A foreign device held `192.168.100.49` (the cloudflared CT). Check that
+> first; it explains both the Error 1033 outage and the disconnections that
+> followed it.**
+
+---
+
+## 0. Incident log — 2026-08-04: IP conflict on 192.168.100.49
+
+**Root cause: a non-Proxmox device on the LAN was answering ARP for
+`192.168.100.49`, the `cf-tunnel` container (CT 110).**
+
+Detected from the Proxmox host with the §2.1 loop:
+
+```
+--- 192.168.100.49
+BC:24:11:AE:93:C3      <- CT 110 (BC:24:11 = Proxmox Server Solutions OUI)
+C8:9E:43:B8:7F:1D      <- foreign device
+--- 192.168.100.50 .. .55
+BC:24:11:*             <- one MAC each, all clean
+```
+
+Only `.49` was contested; every other container answered with a single
+Proxmox-OUI MAC.
+
+**Why one contested address broke everything.** `.49` is the tunnel. With two
+devices trading that address in the LAN's ARP caches, cloudflared's return
+traffic landed on the wrong device roughly half the time — so connectors
+registered, dropped and re-registered. That is exactly what the Zero Trust
+dashboard reports as **Degraded**, and what visitors saw as **Error 1033**. The
+power cut never damaged the tunnel; it rebooted the router, which then leased
+`.49` out to something else.
+
+**Corroborating evidence:** `/var/log/nginx/error.log` on CT 111 was *empty*.
+nginx was recording zero upstream failures, so the apps were not dropping
+behind nginx — requests were dying in front of it, at the tunnel container.
+An empty edge error log during an outage is a strong signal that the fault is
+upstream of nginx, not in the apps.
+
+**Fix applied:** move the router's DHCP pool clear of the static range
+(`.100`–`.200`), not merely carve out `.49`. `.50`–`.55` were exposed to the
+identical failure and were clean only because nothing happened to hold a lease
+on them at that moment — the next router reboot could just as easily have
+landed on `.53` and taken the finance app down instead.
+
+**Lesson for the future:** the static CT block `.49`–`.55` must be outside the
+DHCP pool *by configuration*, not by luck. Verify after any router reboot,
+firmware update, or ISP equipment swap:
+
+```bash
+for ip in 49 50 51 52 53 54 55; do
+  echo "--- 192.168.100.$ip"
+  arping -c 10 -I vmbr0 192.168.100.$ip | grep -oiE '([0-9a-f]{2}:){5}[0-9a-f]{2}' | sort -u
+done
+# every address must return exactly ONE BC:24:11:* MAC
+```
+
+**Differential worth checking before hunting a device:** if the second MAC is
+the gateway's own (`arping -c 4 -I vmbr0 192.168.100.1`), there is no rogue
+client — the router is proxy-ARPing for an address it believes it owns, usually
+from a stale lease. Same fix, but you would otherwise chase a phantom.
+
 ---
 
 ## 1. First, read nginx's error log — it names the layer for you
