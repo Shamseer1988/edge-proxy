@@ -248,6 +248,7 @@ systemctl status cloudflared --no-pager</pre></div>
       <div class="file-label">/etc/cloudflared/config.yml</div>
       <div class="code"><button class="copy">Copy</button><pre>tunnel: TUNNEL_ID_HERE
 credentials-file: /etc/cloudflared/TUNNEL_ID_HERE.json
+protocol: http2          # skip QUIC/UDP 7844 — survives routers that filter UDP
 
 ingress:
   - hostname: accommodation.parisunitedgroup.com
@@ -255,6 +256,10 @@ ingress:
     originRequest:
       noTLSVerify: true
   - hostname: pugfin.parisunitedgroup.com
+    service: https://192.168.100.50:443
+    originRequest:
+      noTLSVerify: true
+  - hostname: legal.parisunitedgroup.com
     service: https://192.168.100.50:443
     originRequest:
       noTLSVerify: true
@@ -266,7 +271,22 @@ ingress:
     service: https://192.168.100.50:443
     originRequest:
       noTLSVerify: true
+  - hostname: teekeyhospitality.com
+    service: https://192.168.100.50:443
+    originRequest:
+      noTLSVerify: true
+  - hostname: www.teekeyhospitality.com
+    service: https://192.168.100.50:443
+    originRequest:
+      noTLSVerify: true
+  - hostname: zeroone.teekeyhospitality.com
+    service: https://192.168.100.50:443
+    originRequest:
+      noTLSVerify: true
   - service: http_status:404</pre></div>
+      <p class="note"><b>Every hostname that has a vhost in <code class="inl">lxc/nginx.conf</code> needs a rule here.</b>
+      Anything missing falls through to the catch-all 404 — and if its DNS record still points at the tunnel,
+      visitors get <b>Error 1033</b>. Same rule for a remotely-managed tunnel: one Public Hostname per vhost.</p>
       <p>Authenticate, copy your tunnel credentials JSON into <code class="inl">/etc/cloudflared/</code>, route DNS, then install the service:</p>
       <div class="code"><button class="copy">Copy</button><pre># If creating fresh (skip if you already have the tunnel + json):
 cloudflared tunnel login
@@ -282,6 +302,25 @@ cloudflared --config /etc/cloudflared/config.yml service install
 systemctl enable --now cloudflared
 systemctl status cloudflared --no-pager</pre></div>
       <p class="tip">cloudflared dials <b>out</b> to Cloudflare on 443 — there is <b>no router port-forwarding</b> anywhere, exactly as you wanted. Type <code class="inl">exit</code> to leave the container.</p>
+      <h3>3.4 Make it survive a power cut</h3>
+      <p>The tunnel is the single point of failure for every hostname: if <code class="inl">cloudflared</code> is not
+      connected, Cloudflare answers <b>Error 1033</b> for all of them regardless of how healthy nginx and the apps are.
+      Three things make recovery automatic — run them now, not after the next outage:</p>
+      <div class="code"><button class="copy">Copy</button><pre># 1. never run cloudflared from a shell — it must be a systemd service
+systemctl is-enabled cloudflared      # must print: enabled
+
+# 2. clock discipline (a skewed clock breaks the edge TLS handshake)
+apt install -y chrony && systemctl enable --now chrony
+
+# 3. restart forever, not just on-failure
+mkdir -p /etc/systemd/system/cloudflared.service.d
+printf '[Service]\nRestart=always\nRestartSec=5\n' > /etc/systemd/system/cloudflared.service.d/override.conf
+systemctl daemon-reload && systemctl restart cloudflared</pre></div>
+      <p class="note">Boot order matters too — set it on the host so the tunnel comes up <b>last</b>:
+      <code class="inl">pct set 110 --startup order=3</code>, <code class="inl">pct set 111 --startup order=2,up=10</code>,
+      and <code class="inl">pct set 11{2,3,4,5,6} --startup order=1,up=15</code>.
+      Full diagnosis + recovery runbook: <code class="inl">docs/tunnel-recovery.md</code>, and
+      <code class="inl">docs/scripts/tunnel-doctor.sh</code> checks the whole chain in one command.</p>
       <label class="markdone"><input type="checkbox"> Mark this step complete</label>
     </div>
   </section>
