@@ -54,13 +54,35 @@ apt install -y mariadb-server apache2 php php-mysqli php-mbstring \
 
 # non-interactive phpMyAdmin install (skips the dbconfig-common wizard —
 # we point it at MariaDB by hand right after, same idea as the unattended
-# installs elsewhere in this repo's runbook)
+# installs elsewhere in this repo's runbook). reconfigure-webserver MUST
+# name apache2, or the postinst skips writing the Apache conf snippet
+# entirely and `a2enconf phpmyadmin` fails with "Conf does not exist".
 echo "phpmyadmin phpmyadmin/dbconfig-install boolean false" | debconf-set-selections
-echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect" | debconf-set-selections
+echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2" | debconf-set-selections
 DEBIAN_FRONTEND=noninteractive apt install -y phpmyadmin
 
-a2enconf phpmyadmin
 systemctl enable --now mariadb apache2
+
+# belt-and-braces: some phpmyadmin package revisions still don't drop the
+# conf snippet even with reconfigure-webserver set correctly. If
+# `a2enconf phpmyadmin` errors "Conf phpmyadmin does not exist", write it
+# by hand and enable it:
+if [ ! -e /etc/apache2/conf-available/phpmyadmin.conf ]; then
+  cat > /etc/apache2/conf-available/phpmyadmin.conf <<'EOF'
+Alias /phpmyadmin /usr/share/phpmyadmin
+
+<Directory /usr/share/phpmyadmin>
+    Options SymLinksIfOwnerMatch
+    DirectoryIndex index.php
+</Directory>
+EOF
+fi
+a2enconf phpmyadmin
+systemctl reload apache2
+
+# confirm PHP is actually wired into Apache (empty output => run
+# `a2enmod php8.2` — or whatever `php -v` reports — then reload again)
+apache2ctl -M | grep -i php
 ```
 
 ## 3. Secure MariaDB + create the sample DB/user
