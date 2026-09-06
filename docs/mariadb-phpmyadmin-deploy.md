@@ -92,7 +92,15 @@ mysql_secure_installation
 # set a strong root password, remove anonymous users, disallow remote
 # root login, remove test DB, reload privileges — answer Y to all.
 
-mysql -u root -p <<'SQL'
+# Debian's MariaDB ships root@localhost on the `unix_socket` auth
+# plugin, so it still logs in with NO password (as the Linux root
+# user) even after mysql_secure_installation — and phpMyAdmin/PHP,
+# which connects over TCP/localhost, can NEVER authenticate as root
+# with a password until the plugin is switched. Log in via socket
+# auth (no -p needed) and everything below runs in one session:
+mysql -u root <<'SQL'
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'CHANGE_ME_STRONG_ROOT_PW';
+
 CREATE DATABASE sample_app CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER 'sample_user'@'localhost' IDENTIFIED BY 'CHANGE_ME_STRONG';
 GRANT ALL PRIVILEGES ON sample_app.* TO 'sample_user'@'localhost';
@@ -105,6 +113,12 @@ CREATE TABLE notes (id INT AUTO_INCREMENT PRIMARY KEY,
 INSERT INTO notes (body) VALUES ('Hello from MariaDB on CT 117');
 SQL
 ```
+
+`ALTER USER ... IDENTIFIED BY` implicitly switches root's plugin from
+`unix_socket` to `mysql_native_password`, so `root` / the password above
+now works from phpMyAdmin too. For the public sample site, prefer logging
+into phpMyAdmin as `sample_user` day-to-day and keep the root password for
+emergencies only.
 
 `bind-address` in `/etc/mysql/mariadb.conf.d/50-server.cnf` defaults to
 `127.0.0.1` on Debian — leave it that way. MariaDB is never reachable over
@@ -237,24 +251,85 @@ systemctl enable --now nftables
 ```
 
 **Strongly recommended before this goes live:** phpMyAdmin on a public
-hostname is a standing attack target even behind Cloudflare. Put one more
-layer in front of `/phpmyadmin` — either a Cloudflare Access policy
-(Zero Trust → Access → Applications → path `maria.parisunitedgroup.com/phpmyadmin*`,
-require login) or HTTP basic auth at the edge-nginx `location`. Basic-auth
-variant, add to the Host 6 block before the catch-all `location /`:
+hostname is a standing attack target even behind Cloudflare. Pick one of
+the two layers below — Step 9 covers HTTP basic auth (already wired into
+`lxc/nginx.conf` Host 6 in this repo), Step 9-alt covers Cloudflare Access
+as the alternative.
 
-```nginx
-location /phpmyadmin/ {
-    auth_basic "Restricted";
-    auth_basic_user_file /etc/nginx/.htpasswd-maria;
-    include /etc/nginx/snippets/proxy-common.conf;
-    proxy_pass http://mariadb_web;
-}
+## 9. Add HTTP basic auth in front of /phpmyadmin
+
+This is done **on the edge-nginx CT (111)**, not on the mariadb CT — nginx
+is what's terminating TLS and routing the hostname, so it's the layer that
+has to prompt for credentials before the request ever reaches phpMyAdmin.
+
+**9.1 — Install the htpasswd tool** (on CT 111):
+
+```bash
+pct enter 111
+apt update && apt install -y apache2-utils
 ```
 
-(`htpasswd -c /etc/nginx/.htpasswd-maria admin` on the edge CT to create it.)
+**9.2 — Create the credentials file** (still on CT 111):
 
-## 9. Verify end-to-end
+```bash
+htpasswd -c /etc/nginx/.htpasswd-maria admin
+# prompts for a password twice, writes the hash to the file
+chmod 640 /etc/nginx/.htpasswd-maria
+chown root:www-data /etc/nginx/.htpasswd-maria 2>/dev/null || true
+```
+
+`-c` creates a **new** file — use it only the first time. To add a second
+user later, run `htpasswd /etc/nginx/.htpasswd-maria another-user`
+(no `-c`, or it wipes the first user).
+
+**9.3 — Deploy the updated `lxc/nginx.conf`**
+
+The `location /phpmyadmin/ { auth_basic ...; }` block is already in this
+repo's `lxc/nginx.conf` (Host 6), ahead of the catch-all `location /`, so
+only `/phpmyadmin/` prompts for a password — the sample site at `/` stays
+open. Ship it and reload:
+
+```bash
+# from your workstation, in this repo
+scp lxc/nginx.conf root@192.168.100.50:/etc/nginx/conf.d/default.conf
+
+# on CT 111
+nginx -t && systemctl reload nginx
+```
+
+**9.4 — Verify**
+
+```bash
+# sample site: no prompt, 200
+curl -I https://maria.parisunitedgroup.com/
+
+# phpMyAdmin: 401 without credentials
+curl -I https://maria.parisunitedgroup.com/phpmyadmin/
+
+# phpMyAdmin: 200/302 with credentials
+curl -I -u admin:YOUR_PASSWORD https://maria.parisunitedgroup.com/phpmyadmin/
+```
+
+In a browser, `https://maria.parisunitedgroup.com/phpmyadmin/` should now
+show a browser-native basic-auth login dialog *before* the phpMyAdmin
+login page itself — two layers of credentials.
+
+## 9-alt. Cloudflare Access instead (skip if you did Step 9)
+
+If you'd rather gate access at Cloudflare's edge (adds SSO/email-OTP,
+audit log, no shared password to leak) instead of nginx basic auth:
+
+1. Cloudflare dashboard → **Zero Trust** → **Access** → **Applications** → **Add an application** → **Self-hosted**.
+2. Application domain: `maria.parisunitedgroup.com`, Path: `/phpmyadmin*`.
+3. Add a policy — e.g. **Allow** where **Emails** = your work email(s).
+4. Save. Visiting `/phpmyadmin` now redirects to a Cloudflare login page
+   (email OTP or your configured identity provider) before it ever reaches
+   the tunnel.
+
+Don't run both Step 9 and 9-alt at once unless you want double auth
+prompts — pick one.
+
+## 10. Verify end-to-end
 
 ```bash
 # DNS resolves through Cloudflare (orange-cloud)
