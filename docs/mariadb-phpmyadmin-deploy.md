@@ -92,7 +92,15 @@ mysql_secure_installation
 # set a strong root password, remove anonymous users, disallow remote
 # root login, remove test DB, reload privileges — answer Y to all.
 
-mysql -u root -p <<'SQL'
+# Debian's MariaDB ships root@localhost on the `unix_socket` auth
+# plugin, so it still logs in with NO password (as the Linux root
+# user) even after mysql_secure_installation — and phpMyAdmin/PHP,
+# which connects over TCP/localhost, can NEVER authenticate as root
+# with a password until the plugin is switched. Log in via socket
+# auth (no -p needed) and everything below runs in one session:
+mysql -u root <<'SQL'
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'CHANGE_ME_STRONG_ROOT_PW';
+
 CREATE DATABASE sample_app CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER 'sample_user'@'localhost' IDENTIFIED BY 'CHANGE_ME_STRONG';
 GRANT ALL PRIVILEGES ON sample_app.* TO 'sample_user'@'localhost';
@@ -105,6 +113,12 @@ CREATE TABLE notes (id INT AUTO_INCREMENT PRIMARY KEY,
 INSERT INTO notes (body) VALUES ('Hello from MariaDB on CT 117');
 SQL
 ```
+
+`ALTER USER ... IDENTIFIED BY` implicitly switches root's plugin from
+`unix_socket` to `mysql_native_password`, so `root` / the password above
+now works from phpMyAdmin too. For the public sample site, prefer logging
+into phpMyAdmin as `sample_user` day-to-day and keep the root password for
+emergencies only.
 
 `bind-address` in `/etc/mysql/mariadb.conf.d/50-server.cnf` defaults to
 `127.0.0.1` on Debian — leave it that way. MariaDB is never reachable over
