@@ -274,13 +274,20 @@ apt update && apt install -y apache2-utils
 ```bash
 htpasswd -c /etc/nginx/.htpasswd-maria admin
 # prompts for a password twice, writes the hash to the file
-chmod 640 /etc/nginx/.htpasswd-maria
-chown root:www-data /etc/nginx/.htpasswd-maria 2>/dev/null || true
+chmod 644 /etc/nginx/.htpasswd-maria
 ```
 
 `-c` creates a **new** file — use it only the first time. To add a second
 user later, run `htpasswd /etc/nginx/.htpasswd-maria another-user`
 (no `-c`, or it wipes the first user).
+
+`chmod 644` (not 640 + a `chown ...www-data`) is deliberate: nginx's
+worker runs as `www-data`, and a `chown` to a group that doesn't
+resolve on this CT fails silently if you swallow its exit code — the
+file stays `root:root` and every `/phpmyadmin/` request then 500s with
+`could not open password file` in `/var/log/nginx/error.log`. World-readable
+is an acceptable tradeoff here: only root has shell access to CT 111, and
+the file holds bcrypt/MD5 hashes, not plaintext passwords.
 
 **9.3 — Deploy the updated `lxc/nginx.conf`**
 
@@ -313,6 +320,14 @@ curl -I -u admin:YOUR_PASSWORD https://maria.parisunitedgroup.com/phpmyadmin/
 In a browser, `https://maria.parisunitedgroup.com/phpmyadmin/` should now
 show a browser-native basic-auth login dialog *before* the phpMyAdmin
 login page itself — two layers of credentials.
+
+**Getting a bare "500 Internal Server Error" right after entering
+credentials** (no phpMyAdmin styling — nginx's own error page): that's
+nginx failing to *read* `/etc/nginx/.htpasswd-maria`, not a phpMyAdmin
+problem. Confirm with `tail -20 /var/log/nginx/error.log` on CT 111 —
+a `could not open password file` line means the file is missing or
+owned/permissioned wrong; `chmod 644 /etc/nginx/.htpasswd-maria` (see
+9.2) and reload.
 
 ## 9-alt. Cloudflare Access instead (skip if you did Step 9)
 
